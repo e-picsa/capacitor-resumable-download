@@ -531,4 +531,38 @@ class HttpRangeDownloaderTest {
         assertFalse(".part file must be purged on explicit cancellation", partFile.exists())
         assertFalse("Sidecar metadata must be purged on explicit cancellation", metaFile.exists())
     }
+
+    @Test
+    fun testZeroByteDownloadSuccess() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", 0)
+                .setHeader("Content-Type", "text/plain")
+                .setBody("")
+        )
+
+        val destFile = File(tempFolder.root, "empty.txt")
+        val snapshots = mutableListOf<HttpRangeDownloader.ProgressSnapshot>()
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-empty",
+                url = server.url("/empty.txt").toString(),
+                destinationFile = destFile
+            ),
+            onProgress = { snapshots.add(it) }
+        )
+
+        assertTrue("Outcome should be Success for zero-byte file", outcome is HttpRangeDownloader.DownloadOutcome.Success)
+        val success = outcome as HttpRangeDownloader.DownloadOutcome.Success
+        assertEquals(0L, success.size)
+        assertTrue("Destination file should exist", destFile.exists())
+        assertEquals(0L, destFile.length())
+
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+        assertFalse(".part file must be cleaned up on success", partFile.exists())
+        assertFalse("Sidecar metadata must be cleaned up on success", metaFile.exists())
+    }
 }

@@ -618,7 +618,7 @@ class HttpRangeDownloader(
             moved = true
         }
 
-        if (!destFile.exists() || destFile.length() == 0L) {
+        if (!destFile.exists()) {
             throw IOException("Failed to move temporary .part file to final destination: ${destFile.absolutePath}")
         }
     }

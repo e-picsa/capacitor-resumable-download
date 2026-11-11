@@ -212,7 +212,6 @@ class ResumableDownloadPlugin : Plugin() {
         }
 
         DownloadWorker.setPaused(downloadId, true)
-        WorkManager.getInstance(context).cancelUniqueWork("download_$downloadId")
         call.resolve()
     }
 
@@ -459,13 +458,27 @@ class ResumableDownloadPlugin : Plugin() {
                                 call.resolve(ret)
                             }
                             WorkInfo.State.CANCELLED -> {
-                                val errorData = JSObject().apply {
-                                    put("downloadId", config.downloadId)
-                                    put("exceptionClass", "CancellationException")
-                                    put("canResume", false)
-                                    put("bytesDownloaded", 0L)
+                                if (DownloadWorker.isPaused(config.downloadId)) {
+                                    val destFile = File(config.destinationPath)
+                                    val partFile = File(destFile.absolutePath + ".part")
+                                    val size = if (partFile.exists()) partFile.length() else 0L
+                                    val ret = JSObject().apply {
+                                        put("downloadId", config.downloadId)
+                                        put("status", "paused")
+                                        put("uri", "")
+                                        put("size", size)
+                                        put("resumed", true)
+                                    }
+                                    call.resolve(ret)
+                                } else {
+                                    val errorData = JSObject().apply {
+                                        put("downloadId", config.downloadId)
+                                        put("exceptionClass", "CancellationException")
+                                        put("canResume", false)
+                                        put("bytesDownloaded", 0L)
+                                    }
+                                    call.reject("Download was cancelled.", "CancellationException", errorData)
                                 }
-                                call.reject("Download was cancelled.", "CancellationException", errorData)
                             }
                             WorkInfo.State.FAILED -> {
                                 val errMsg = output.getString(DownloadWorker.KEY_OUTPUT_ERROR)
