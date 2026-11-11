@@ -500,6 +500,9 @@ presetLocal.addEventListener('click', () => {
 });
 
 destInput.addEventListener('input', refreshDerivedId);
+// 'change' covers programmatic fills (e.g. a11y-driven input) that don't emit 'input'
+// on older WebViews.
+destInput.addEventListener('change', refreshDerivedId);
 
 // Restore known tasks across reloads so files can be resumed later.
 function restoreTasks() {
