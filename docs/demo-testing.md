@@ -2,6 +2,8 @@
 
 This guide gives AI agents (and humans) deterministic tooling to interact with the
 example app on the `Medium_Phone` emulator and capture logs without manual tapping.
+For pre-Android-8 emulators, see [Android 7 (API 24) testing](#6-android-7-api-24-testing) —
+the stock System WebView there is too old to run the demo bundle.
 
 ## 1. Prerequisites
 
@@ -104,3 +106,54 @@ Key tags/codes:
 # Prefer device_screenshot tool for viewing; agent-device screenshot for files:
 $AGENT screenshot /tmp/demo.png
 ```
+
+## 6. Android 7 (API 24) testing
+
+The native plugin is API-24-safe by design (foreground-service branching,
+NIO reflection fallback, `canonicalPath` checks), and `older_device` exists to
+prove it. But stock API 24 emulator images ship System WebView **Chrome 53**
+(2016), which predates `<script type="module">` (Chrome 61) — so the demo bundle
+never executes: taps do nothing and logcat shows
+`Uncaught SyntaxError: Unexpected token (` with zero `Plugin listeners ready`.
+That is a fossil-WebView artifact, not a plugin bug (real devices update WebView
+via the Play Store), so the fix is upgrading the WebView, not a legacy JS build.
+
+The same procedure applies to any pre-Chrome-61 emulator image.
+
+### 6a. Download + sideload Chrome 119 (last major supporting API 24)
+
+```bash
+# ~244MB, minAPI24 arm64 build, hosted on Cloudflare R2 (verified 200 OK,
+# application/vnd.android.package-archive, strong ETag, installs cleanly)
+curl -o /tmp/chrome119.apk https://pub-d7c30ed48e6840d684930ff830ba2819.r2.dev/chrome119.arm64.apk
+
+# Sideload to the old emulator (serials can reshuffle across reboots —
+# confirm with `adb devices` / device_list first, don't hardcode)
+adb -s <older_device_serial> install -r /tmp/chrome119.apk   # expect: Success
+
+# Switch the WebView implementation from stock to Chrome
+adb -s <older_device_serial> shell cmd webviewupdate set-webview-implementation com.android.chrome
+adb -s <older_device_serial> shell dumpsys package com.android.chrome | grep versionName
+# expect: versionName=119.0.6045.194
+```
+
+No demo rebuild or reinstall needed afterwards — relaunch the app and confirm
+`Plugin listeners ready.` in logcat with no `SyntaxError`.
+
+### 6b. Run the download test
+
+Same flow as §2 (use the throttled local server for a pausable window).
+Verified on `older_device` 2026-11-11: 5MB completed; 20MB @50KB/s paused at
+2.4MB → resumed with `resumedFromBytes=2523136` → cancelled (`.part` purged,
+row → CANCELLED) → restarted @2000KB/s to full completion with target file
+present (20MB) and no `.part`/sidecar leftovers.
+
+Agent notes specific to the old WebView / snapshot helper:
+
+- Refs renumber between snapshots and taps can silently miss — re-snapshot
+  immediately before each `fill`/`press`, and confirm the effect in logcat.
+- The readonly Task ID display only refreshes on `input`+`change` events;
+  the Start handler always derives fresh from the destination field regardless.
+- On API 24 there is no notification-permission dialog (`POST_NOTIFICATIONS`
+  doesn't exist pre-33; the plugin reports granted), so Start proceeds directly.
+- Delete `chrome119.apk` / `/tmp` copies afterwards — never commit the binary.
