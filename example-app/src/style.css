@@ -343,4 +343,28 @@ input[type="text"]:focus {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.server-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.server-pill.checking {
+  color: var(--text-muted);
+}
+
+.server-pill.reachable {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.server-pill.unreachable {
+  color: var(--danger);
+  border-color: var(--danger);
 }

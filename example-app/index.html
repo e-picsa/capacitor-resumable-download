@@ -21,7 +21,7 @@
             <label for="urlInput">Source URL</label>
             <details class="info">
               <summary aria-label="About test files">ⓘ</summary>
-              <p>Quick tests against files that support byte-range resume. The local option is a throttled server on the host machine — best for pause/resume testing. See the testing guide for setup.</p>
+              <p>Quick tests against files that support byte-range resume. The local option streams a test file from the host computer with artificial slowdown, so pause/resume is easy to try — the pill shows whether the app can reach it.</p>
             </details>
           </div>
           <input
@@ -34,6 +34,7 @@
             <button id="preset10MB" class="btn-sm" type="button">10 MB quick test</button>
             <button id="preset100MB" class="btn-sm" type="button">100 MB pause/resume</button>
             <button id="presetLocal" class="btn-sm" type="button">Local throttled server</button>
+            <span id="localServerStatus" class="server-pill checking" role="status">Checking local server…</span>
           </div>
         </div>
 

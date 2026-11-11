@@ -57,7 +57,7 @@ progress events plus a periodic native `getStatus` poll.
 - **Task rows prove multi-file state**: `[TASKS] n=2 keys=a,b` in logcat confirms
   the JS registry; if a row isn't in the snapshot, scroll before concluding it's missing.
 
-Preset buttons (`preset10MB`, `preset100MB`, `presetLocal`) fill URL/dest in one tap.
+Preset buttons (`10 MB`, `100 MB`, `Local throttled server`) fill URL/dest in one tap.
 Throttled local preset uses `http://10.0.2.2:8080/large.bin?throttle_kbps=200`
 (emulator loopback to host). Start the host server first:
 
@@ -65,6 +65,12 @@ Throttled local preset uses `http://10.0.2.2:8080/large.bin?throttle_kbps=200`
 yarn serve:test-file                # :8080, 50MB, strong ETag, Range + throttle
 yarn verify:cdn http://localhost:8080/large.bin
 ```
+
+The pill next to the presets (`Local server: reachable · 20.0 MB` /
+`unreachable`) probes `http://10.0.2.2:8080/health` on launch and every 15s,
+so the demo itself tells you whether the local option will work. It needs
+`android.allowMixedContent` (demo-only, in `capacitor.config.ts`) plus the
+server's CORS header — both already wired.
 
 ## 3. Logs (three layers, all agent-readable)
 
