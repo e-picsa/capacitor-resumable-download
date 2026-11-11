@@ -322,12 +322,47 @@ class HttpRangeDownloader(
 
             if (code == 206) {
                 // Partial Content accepted
-                resumed = true
                 val contentRange = resp.header("Content-Range")
                 totalBytes = parseTotalBytesFromContentRange(contentRange)
                 if (totalBytes <= 0 && sidecar != null && sidecar.totalBytes > 0) {
                     totalBytes = sidecar.totalBytes
                 }
+
+                // When resuming without If-Range (e.g., weak ETag or missing ETag), verify the server's
+                // representation has not changed by checking ETag and totalBytes against the sidecar.
+                val storedEtag = sidecar?.etag
+                val etagChanged = !storedEtag.isNullOrBlank() && !etagHeader.isNullOrBlank() && storedEtag != etagHeader
+                val sizeChanged = sidecar != null && sidecar.totalBytes > 0 && totalBytes > 0 && sidecar.totalBytes != totalBytes
+
+                if (etagChanged || sizeChanged) {
+                    onDiagnostic(
+                        "warn",
+                        "Remote representation changed during resume (ETag or size mismatch). Resetting partial file and restarting from byte 0.",
+                        "RANGE_REPRESENTATION_CHANGED",
+                        mapOf(
+                            "oldEtag" to storedEtag,
+                            "newEtag" to etagHeader,
+                            "oldSize" to sidecar?.totalBytes,
+                            "newSize" to totalBytes
+                        )
+                    )
+                    partFile.delete()
+                    metaFile.delete()
+                    if (retryOn416Count < 1) {
+                        return execute(
+                            request = request,
+                            onProgress = onProgress,
+                            onDiagnostic = onDiagnostic,
+                            onCallCreated = onCallCreated,
+                            isCancelled = isCancelled,
+                            isPaused = isPaused,
+                            isStopped = isStopped,
+                            retryOn416Count = retryOn416Count + 1
+                        )
+                    }
+                }
+
+                resumed = true
                 writeMode = "rw"
             } else {
                 // HTTP 200 OK: either brand new download or range was rejected/reset

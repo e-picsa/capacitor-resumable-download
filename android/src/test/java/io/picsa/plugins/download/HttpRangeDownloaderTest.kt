@@ -449,6 +449,61 @@ class HttpRangeDownloaderTest {
     }
 
     @Test
+    fun testWeakETagChangedResetsDownloadFromZero() {
+        val totalSize = 6_000
+        val oldPayload = ByteArray(totalSize) { 7 }
+        val newPayload = ByteArray(totalSize) { 9 }
+        val offset = 2_000
+
+        val destFile = File(tempFolder.root, "weak_etag_changed.bin")
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+
+        partFile.writeBytes(oldPayload.copyOfRange(0, offset))
+        val sidecar = HttpRangeDownloader.MetaSidecar(
+            url = server.url("/weak-etag-changed").toString(),
+            etag = "W/\"weak-etag-v1\"",
+            totalBytes = totalSize.toLong()
+        )
+        metaFile.writeText(sidecar.toJson())
+
+        // First response: 206 with a DIFFERENT weak ETag (resource updated on server)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .setHeader("ETag", "W/\"weak-etag-v2\"")
+                .setHeader("Content-Range", "bytes $offset-${totalSize - 1}/$totalSize")
+                .setHeader("Content-Length", totalSize - offset)
+                .setBody(Buffer().write(newPayload.copyOfRange(offset, totalSize)))
+        )
+
+        // Second response: full 200 download from byte 0
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("ETag", "W/\"weak-etag-v2\"")
+                .setHeader("Content-Length", totalSize)
+                .setBody(Buffer().write(newPayload))
+        )
+
+        val diagnostics = mutableListOf<String>()
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-weak-changed",
+                url = server.url("/weak-etag-changed").toString(),
+                destinationFile = destFile
+            ),
+            onDiagnostic = { _, _, code, _ ->
+                if (code != null) diagnostics.add(code)
+            }
+        )
+
+        assertTrue(outcome is HttpRangeDownloader.DownloadOutcome.Success)
+        assertTrue(diagnostics.contains("RANGE_REPRESENTATION_CHANGED"))
+        assertArrayEquals("File content must match new representation without corruption", newPayload, destFile.readBytes())
+    }
+
+    @Test
     fun testWorkerPreemptionPreservesPartialFile() {
         val totalSize = 10_000
         val payload = ByteArray(totalSize) { 3 }
