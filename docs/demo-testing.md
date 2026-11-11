@@ -23,19 +23,22 @@ AGENT=/Users/chrismclarke/.t3/userdata/device/targets/<session>/agent-device
 # (re)launch — find current path via device_open if missing
 $AGENT open io.picsa.plugins.download.example --relaunch
 $AGENT snapshot -i
-# @e6=url field, @e18=dest field, @e20=download ID field, @e24=Start, @e25=Pause,
-# @e26=Resume, @e27=Cancel, @e28=Get Status, @e29=Check Disk File, @e31=Refresh All
-# Task rows: "Select download <id>, status <s>, <p>%" — tap to select (monitor follows selection)
+# @e6=url field, @e18=dest field, @e24=Start Download.
+# Task rows show live progress + throughput with per-row Pause/Resume/Cancel/Delete
+# (aria-labelled "<Action> <downloadId>"); rows auto-refresh via progress events
+# plus a 3s native getStatus poll — no manual refresh needed.
 
 $AGENT fill @e6 "https://proof.ovh.net/files/10Mb.dat" --settle
-$AGENT press @e24 --settle          # Start Download (new task per download ID)
-$AGENT snapshot -i                  # read task rows + Live Monitor + logConsole
+$AGENT press @e24 --settle          # Start Download (new task per destination)
+$AGENT snapshot -i                  # read task rows + logConsole
+$AGENT scroll down 600 --settle     # rows below the fold are clipped from snapshots
 ```
 
-Each URL/destination maps to its own download ID (auto-derived from destination,
-editable). Switching presets with a different destination targets a different task —
-progress, pause, and resume follow the selected row, and each file keeps its own
-`.part` resume state. Use Refresh All to re-query native `getStatus` per task.
+Each destination path maps to its own task ID (derived automatically, shown readonly
+under the path). Switching presets with a different destination targets a different
+task — each row shows live progress, status and throughput, and pause/resume/cancel/delete
+act per row. Each file keeps its own `.part` resume state, and rows auto-refresh via
+progress events plus a periodic native `getStatus` poll.
 
 ## Agent snapshot caveats (learned the hard way)
 
