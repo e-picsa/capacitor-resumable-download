@@ -167,7 +167,22 @@ const server = http.createServer((req, res) => {
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           if (res.destroyed || res.writableEnded) break;
           const ok = res.write(chunk);
-          if (!ok) await new Promise((resolve) => res.once('drain', resolve));
+          if (!ok) {
+            // Resolve on close too: if the client disconnects while
+            // backpressured, 'drain' never fires and the fd would leak.
+            await new Promise((resolve) => {
+              const onDrain = () => {
+                res.off('close', onClose);
+                resolve();
+              };
+              const onClose = () => {
+                res.off('drain', onDrain);
+                resolve();
+              };
+              res.once('drain', onDrain);
+              res.once('close', onClose);
+            });
+          }
           offset += read;
         }
         if (!res.destroyed && !res.writableEnded) res.end();
