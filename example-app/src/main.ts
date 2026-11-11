@@ -84,8 +84,9 @@ async function setupPluginListeners() {
   });
 
   await ResumableDownload.addListener('downloadDiagnostic', (diag: DownloadDiagnosticEvent) => {
+    const codeTag = diag.code ? `[${diag.code}] ` : '';
     log(
-      `[DIAGNOSTIC ${diag.level.toUpperCase()}] ${diag.message}`,
+      `[DIAGNOSTIC ${diag.level.toUpperCase()}] ${codeTag}${diag.message}`,
       diag.level === 'error' ? 'error' : 'warn',
     );
   });
@@ -126,11 +127,19 @@ btnStart.addEventListener('click', async () => {
       },
     });
 
-    log(
-      `Download completed successfully! URI: ${result.uri} (Resumed: ${result.resumed})`,
-      'success',
-    );
-    updateUiState('completed');
+    if (result.status === 'paused') {
+      log(
+        `Download paused at ${formatBytes(result.size)}. Partial file preserved on disk.`,
+        'warn',
+      );
+      updateUiState('paused');
+    } else {
+      log(
+        `Download completed successfully! URI: ${result.uri} (Resumed: ${result.resumed})`,
+        'success',
+      );
+      updateUiState('completed');
+    }
   } catch (err: any) {
     log(`Download failed: ${err.message}`, 'error');
     updateUiState('error');
@@ -152,9 +161,23 @@ btnResume.addEventListener('click', async () => {
   log('Resuming download...', 'info');
   updateUiState('downloading');
   try {
-    const result = await ResumableDownload.resume({ downloadId: CURRENT_DOWNLOAD_ID });
-    log(`Resumed download finished! URI: ${result.uri}`, 'success');
-    updateUiState('completed');
+    const url = urlInput.value.trim();
+    const destinationPath = destInput.value.trim();
+    const result = await ResumableDownload.resume({
+      downloadId: CURRENT_DOWNLOAD_ID,
+      url,
+      destinationPath,
+    });
+    if (result.status === 'paused') {
+      log(
+        `Download paused at ${formatBytes(result.size)}. Partial file preserved on disk.`,
+        'warn',
+      );
+      updateUiState('paused');
+    } else {
+      log(`Resumed download finished! URI: ${result.uri}`, 'success');
+      updateUiState('completed');
+    }
   } catch (err: any) {
     log(`Resume error: ${err.message}`, 'error');
     updateUiState('error');

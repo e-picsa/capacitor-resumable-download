@@ -1,14 +1,13 @@
 package io.picsa.plugins.download
 
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.File
-import java.io.RandomAccessFile
 import java.io.IOException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
+import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
 
 /**
@@ -21,6 +20,8 @@ import java.util.concurrent.TimeUnit
 class HttpRangeDownloader(
     private val client: OkHttpClient = defaultClient()
 ) {
+
+    class HttpException(val statusCode: Int, message: String) : IOException(message)
 
     companion object {
         fun defaultClient(): OkHttpClient {
@@ -71,7 +72,8 @@ class HttpRangeDownloader(
         data class Paused(
             val downloadId: String,
             val bytesDownloaded: Long,
-            val totalBytes: Long
+            val totalBytes: Long,
+            val isPreempted: Boolean = false
         ) : DownloadOutcome()
 
         data class Cancelled(
@@ -117,14 +119,18 @@ class HttpRangeDownloader(
     }
 
     /**
-     * Executes the download with support for pause, cancellation, and byte-range resumption.
+     * Executes the download with support for pause, cancellation, system preemption,
+     * and byte-range resumption.
      */
     fun execute(
         request: DownloadRequest,
         onProgress: (ProgressSnapshot) -> Unit = {},
-        onDiagnostic: (level: String, message: String) -> Unit = { _, _ -> },
+        onDiagnostic: (level: String, message: String, code: String?, context: Map<String, Any?>?) -> Unit = { _, _, _, _ -> },
+        onCallCreated: (Call) -> Unit = {},
         isCancelled: () -> Boolean = { false },
-        isPaused: () -> Boolean = { false }
+        isPaused: () -> Boolean = { false },
+        isStopped: () -> Boolean = { false },
+        retryOn416Count: Int = 0
     ): DownloadOutcome {
         val destFile = request.destinationFile
         val parentDir = destFile.parentFile
@@ -135,12 +141,17 @@ class HttpRangeDownloader(
         val partFile = File(destFile.absolutePath + ".part")
         val metaFile = File(destFile.absolutePath + ".part.meta.json")
 
-        var sidecar = readMetaSidecar(metaFile)
+        var sidecar = readMetaSidecar(metaFile, onDiagnostic)
         var partLength = if (partFile.exists()) partFile.length() else 0L
 
         // If part file exists but sidecar URL is different, discard corrupt/stale partial file
         if (partFile.exists() && sidecar != null && sidecar.url != request.url) {
-            onDiagnostic("warn", "Existing .part file belongs to a different URL. Purging.")
+            onDiagnostic(
+                "warn",
+                "Existing .part file belongs to a different URL (${sidecar.url} != ${request.url}). Purging.",
+                "DIFFERENT_URL_PURGED",
+                mapOf("oldUrl" to sidecar.url, "newUrl" to request.url)
+            )
             partFile.delete()
             metaFile.delete()
             partLength = 0L
@@ -151,22 +162,60 @@ class HttpRangeDownloader(
         var resumed = false
 
         val httpRequestBuilder = Request.Builder().url(request.url)
+
+        // Always request identity encoding unless caller explicitly specifies otherwise,
+        // preventing transparent gzip from corrupting byte-range slicing.
+        if (!request.headers.keys.any { it.equals("Accept-Encoding", ignoreCase = true) }) {
+            httpRequestBuilder.addHeader("Accept-Encoding", "identity")
+        }
+
         for ((k, v) in request.headers) {
             httpRequestBuilder.addHeader(k, v)
         }
 
         if (partLength > 0L) {
             httpRequestBuilder.addHeader("Range", "bytes=$partLength-")
-            if (!sidecar?.etag.isNullOrBlank()) {
-                httpRequestBuilder.addHeader("If-Range", sidecar!!.etag!!)
+            val storedEtag = sidecar?.etag
+            if (!storedEtag.isNullOrBlank()) {
+                if (storedEtag.startsWith("W/")) {
+                    onDiagnostic(
+                        "warn",
+                        "Stored ETag is weak ($storedEtag). Omitting If-Range header per RFC 9110 byte-range specification.",
+                        "WEAK_ETAG_DETECTED",
+                        mapOf("etag" to storedEtag)
+                    )
+                } else {
+                    httpRequestBuilder.addHeader("If-Range", storedEtag)
+                }
             }
         }
 
         val call = client.newCall(httpRequestBuilder.build())
+        onCallCreated(call)
+
         val response: Response
         try {
             response = call.execute()
         } catch (e: IOException) {
+            if (isCancelled()) {
+                partFile.delete()
+                metaFile.delete()
+                return DownloadOutcome.Cancelled(request.downloadId, partLength)
+            }
+            if (isPaused() || isStopped()) {
+                return DownloadOutcome.Paused(
+                    request.downloadId,
+                    partLength,
+                    sidecar?.totalBytes ?: -1L,
+                    isPreempted = isStopped()
+                )
+            }
+            onDiagnostic(
+                "warn",
+                "Network connection interrupted: ${e.message ?: e.javaClass.simpleName}. Partial file preserved for resumption.",
+                "SOCKET_DROP_RESUMABLE",
+                mapOf("bytesDownloaded" to partLength, "canResume" to (partLength > 0))
+            )
             onProgress(
                 ProgressSnapshot(
                     downloadId = request.downloadId,
@@ -191,22 +240,49 @@ class HttpRangeDownloader(
 
             // Case 1: 416 Range Not Satisfiable
             if (code == 416) {
-                onDiagnostic("warn", "Server responded with HTTP 416 Range Not Satisfiable. Resetting partial file.")
+                onDiagnostic(
+                    "warn",
+                    "Server responded with HTTP 416 Range Not Satisfiable. Resetting partial file.",
+                    "RANGE_NOT_SATISFIABLE_416",
+                    mapOf("bytesDownloaded" to partLength)
+                )
                 partFile.delete()
                 metaFile.delete()
-                // Retry once from byte 0
-                return execute(
-                    request = request,
-                    onProgress = onProgress,
-                    onDiagnostic = onDiagnostic,
-                    isCancelled = isCancelled,
-                    isPaused = isPaused
-                )
+
+                if (retryOn416Count < 1) {
+                    return execute(
+                        request = request,
+                        onProgress = onProgress,
+                        onDiagnostic = onDiagnostic,
+                        onCallCreated = onCallCreated,
+                        isCancelled = isCancelled,
+                        isPaused = isPaused,
+                        isStopped = isStopped,
+                        retryOn416Count = retryOn416Count + 1
+                    )
+                } else {
+                    val err = HttpException(416, "HTTP 416 Range Not Satisfiable persisted after resetting partial file.")
+                    onProgress(
+                        ProgressSnapshot(
+                            downloadId = request.downloadId,
+                            bytesDownloaded = 0L,
+                            totalBytes = -1L,
+                            progress = 0,
+                            status = ProgressSnapshot.Status.ERROR
+                        )
+                    )
+                    return DownloadOutcome.Failure(
+                        downloadId = request.downloadId,
+                        error = err,
+                        bytesDownloaded = 0L,
+                        canResume = false
+                    )
+                }
             }
 
             // Case 2: Server returned non-success code
             if (!resp.isSuccessful && code != 206) {
-                val err = IOException("HTTP ${resp.code} ${resp.message}")
+                val err = HttpException(resp.code, "HTTP ${resp.code} ${resp.message}")
                 onProgress(
                     ProgressSnapshot(
                         downloadId = request.downloadId,
@@ -239,7 +315,12 @@ class HttpRangeDownloader(
             } else {
                 // HTTP 200 OK: either brand new download or range was rejected/reset
                 if (partLength > 0L) {
-                    onDiagnostic("warn", "Server returned HTTP 200 OK for Range request. Restarting from byte 0.")
+                    onDiagnostic(
+                        "warn",
+                        "Server returned HTTP 200 OK for Range request. Restarting download from byte 0.",
+                        "RANGE_RESET_200",
+                        null
+                    )
                     partLength = 0L
                 }
                 val cl = resp.header("Content-Length")
@@ -253,7 +334,7 @@ class HttpRangeDownloader(
                 etag = etagHeader ?: sidecar?.etag,
                 totalBytes = totalBytes
             )
-            writeMetaSidecar(metaFile, newSidecar)
+            writeMetaSidecar(metaFile, newSidecar, onDiagnostic)
 
             val body = resp.body ?: return DownloadOutcome.Failure(
                 downloadId = request.downloadId,
@@ -280,19 +361,6 @@ class HttpRangeDownloader(
                         var read: Int
 
                         while (inputStream.read(buffer).also { read = it } != -1) {
-                            if (isPaused()) {
-                                onProgress(
-                                    ProgressSnapshot(
-                                        downloadId = request.downloadId,
-                                        bytesDownloaded = currentBytes,
-                                        totalBytes = totalBytes,
-                                        progress = calculateProgress(currentBytes, totalBytes),
-                                        status = ProgressSnapshot.Status.PAUSED
-                                    )
-                                )
-                                return DownloadOutcome.Paused(request.downloadId, currentBytes, totalBytes)
-                            }
-
                             if (isCancelled()) {
                                 onProgress(
                                     ProgressSnapshot(
@@ -306,6 +374,48 @@ class HttpRangeDownloader(
                                 partFile.delete()
                                 metaFile.delete()
                                 return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
+                            }
+
+                            if (isPaused()) {
+                                onProgress(
+                                    ProgressSnapshot(
+                                        downloadId = request.downloadId,
+                                        bytesDownloaded = currentBytes,
+                                        totalBytes = totalBytes,
+                                        progress = calculateProgress(currentBytes, totalBytes),
+                                        status = ProgressSnapshot.Status.PAUSED
+                                    )
+                                )
+                                return DownloadOutcome.Paused(
+                                    request.downloadId,
+                                    currentBytes,
+                                    totalBytes,
+                                    isPreempted = false
+                                )
+                            }
+
+                            if (isStopped()) {
+                                onDiagnostic(
+                                    "warn",
+                                    "Download worker was stopped by system. Partial file preserved for resumption.",
+                                    "WORKER_PREEMPTED",
+                                    mapOf("bytesDownloaded" to currentBytes, "totalBytes" to totalBytes)
+                                )
+                                onProgress(
+                                    ProgressSnapshot(
+                                        downloadId = request.downloadId,
+                                        bytesDownloaded = currentBytes,
+                                        totalBytes = totalBytes,
+                                        progress = calculateProgress(currentBytes, totalBytes),
+                                        status = ProgressSnapshot.Status.PAUSED
+                                    )
+                                )
+                                return DownloadOutcome.Paused(
+                                    request.downloadId,
+                                    currentBytes,
+                                    totalBytes,
+                                    isPreempted = true
+                                )
                             }
 
                             raf.write(buffer, 0, read)
@@ -338,6 +448,19 @@ class HttpRangeDownloader(
                     }
                 }
             } catch (ioe: IOException) {
+                if (isCancelled()) {
+                    partFile.delete()
+                    metaFile.delete()
+                    return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
+                }
+                if (isPaused() || isStopped()) {
+                    return DownloadOutcome.Paused(
+                        request.downloadId,
+                        currentBytes,
+                        totalBytes,
+                        isPreempted = isStopped()
+                    )
+                }
                 onProgress(
                     ProgressSnapshot(
                         downloadId = request.downloadId,
@@ -366,20 +489,16 @@ class HttpRangeDownloader(
                 )
             }
 
-            // Atomically rename .part to final destination
-            if (destFile.exists()) {
-                destFile.delete()
-            }
+            // Move completed file to destination safely across Android 7+ and JVM
             try {
-                Files.move(
-                    partFile.toPath(),
-                    destFile.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE
+                completeFileMove(partFile, destFile, onDiagnostic)
+            } catch (moveErr: IOException) {
+                return DownloadOutcome.Failure(
+                    downloadId = request.downloadId,
+                    error = moveErr,
+                    bytesDownloaded = currentBytes,
+                    canResume = true
                 )
-            } catch (_: Exception) {
-                // Fallback to standard file rename if filesystem doesn't support atomic move
-                partFile.renameTo(destFile)
             }
 
             metaFile.delete()
@@ -412,7 +531,6 @@ class HttpRangeDownloader(
 
     private fun parseTotalBytesFromContentRange(contentRange: String?): Long {
         if (contentRange == null) return -1L
-        // Formats: bytes 0-1023/1024 or bytes 100-200/*
         val slashIndex = contentRange.lastIndexOf('/')
         if (slashIndex != -1 && slashIndex + 1 < contentRange.length) {
             val totalStr = contentRange.substring(slashIndex + 1).trim()
@@ -421,21 +539,117 @@ class HttpRangeDownloader(
         return -1L
     }
 
-    private fun readMetaSidecar(file: File): MetaSidecar? {
+    private fun readMetaSidecar(
+        file: File,
+        onDiagnostic: (String, String, String?, Map<String, Any?>?) -> Unit
+    ): MetaSidecar? {
         if (!file.exists()) return null
         return try {
             val content = file.readText(Charsets.UTF_8)
             MetaSidecar.fromJson(content)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            onDiagnostic(
+                "warn",
+                "Failed to parse sidecar metadata (${e.message}): resetting sidecar.",
+                "SIDECAR_READ_ERROR",
+                mapOf("path" to file.absolutePath)
+            )
             null
         }
     }
 
-    private fun writeMetaSidecar(file: File, meta: MetaSidecar) {
+    private fun writeMetaSidecar(
+        file: File,
+        meta: MetaSidecar,
+        onDiagnostic: (String, String, String?, Map<String, Any?>?) -> Unit
+    ) {
         try {
             file.writeText(meta.toJson(), Charsets.UTF_8)
-        } catch (_: Exception) {
-            // Non-fatal if sidecar write fails
+        } catch (e: Exception) {
+            onDiagnostic(
+                "warn",
+                "Failed to persist sidecar metadata (${e.message}).",
+                "SIDECAR_WRITE_ERROR",
+                mapOf("path" to file.absolutePath)
+            )
+        }
+    }
+
+    private fun completeFileMove(
+        partFile: File,
+        destFile: File,
+        onDiagnostic: (level: String, message: String, code: String?, context: Map<String, Any?>?) -> Unit
+    ) {
+        var moved = false
+        // Try atomic move via reflection (works on Android 8+ & host JVM without Android 7 LinkageError)
+        try {
+            moved = tryNioAtomicMove(partFile, destFile)
+        } catch (t: Throwable) {
+            onDiagnostic(
+                "info",
+                "Atomic move not available (${t.javaClass.simpleName}); using standard rename.",
+                "NIO_MOVE_FALLBACK",
+                null
+            )
+        }
+
+        if (!moved) {
+            if (destFile.exists()) {
+                destFile.delete()
+            }
+            moved = partFile.renameTo(destFile)
+        }
+
+        if (!moved) {
+            onDiagnostic(
+                "warn",
+                "File.renameTo failed; falling back to stream copy.",
+                "NIO_MOVE_FALLBACK",
+                null
+            )
+            partFile.inputStream().use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (!partFile.delete()) {
+                onDiagnostic("warn", "Could not delete temporary .part file after copy fallback.", null, null)
+            }
+            moved = true
+        }
+
+        if (!destFile.exists() || destFile.length() == 0L) {
+            throw IOException("Failed to move temporary .part file to final destination: ${destFile.absolutePath}")
+        }
+    }
+
+    /**
+     * Attempts atomic file move via reflection to avoid direct bytecode references
+     * to java.nio.file.* which trigger NewApi lint errors on Android < 26.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun tryNioAtomicMove(source: File, destination: File): Boolean {
+        return try {
+            val filesClass = Class.forName("java.nio.file.Files")
+            val copyOptionClass = Class.forName("java.nio.file.CopyOption")
+            val standardCopyOptionClass = Class.forName("java.nio.file.StandardCopyOption")
+            val replaceExisting = java.lang.Enum.valueOf(standardCopyOptionClass as Class<out Enum<*>>, "REPLACE_EXISTING")
+            val atomicMove = java.lang.Enum.valueOf(standardCopyOptionClass as Class<out Enum<*>>, "ATOMIC_MOVE")
+
+            val optionsArray = java.lang.reflect.Array.newInstance(copyOptionClass, 2)
+            java.lang.reflect.Array.set(optionsArray, 0, replaceExisting)
+            java.lang.reflect.Array.set(optionsArray, 1, atomicMove)
+
+            val toPathMethod = File::class.java.getMethod("toPath")
+            val sourcePath = toPathMethod.invoke(source)
+            val destPath = toPathMethod.invoke(destination)
+
+            val pathClass = Class.forName("java.nio.file.Path")
+            val moveMethod = filesClass.getMethod("move", pathClass, pathClass, optionsArray.javaClass)
+            moveMethod.invoke(null, sourcePath, destPath, optionsArray)
+            true
+        } catch (_: Throwable) {
+            false
         }
     }
 }

@@ -23,7 +23,7 @@ android {
     compileSdk safeExtGet('compileSdkVersion', 35)
 
     defaultConfig {
-        minSdk safeExtGet('minSdkVersion', 23)
+        minSdk safeExtGet('minSdkVersion', 24)
         targetSdk safeExtGet('targetSdkVersion', 35)
         versionCode 1
         versionName "0.0.1"
@@ -49,6 +49,13 @@ android {
     testOptions {
         unitTests.returnDefaultValues = true
         unitTests.includeAndroidResources = false
+    }
+
+    lint {
+        abortOnError true
+        warningsAsErrors false
+        checkDependencies false
+        textReport true
     }
 }
 

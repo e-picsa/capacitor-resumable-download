@@ -1,16 +1,19 @@
 package io.picsa.plugins.download
 
 import android.Manifest
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Build
+import android.util.Log
 import androidx.lifecycle.Observer
 import androidx.work.*
 import com.getcapacitor.*
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
-import com.getcapacitor.annotation.PermissionCallback
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 
 @CapacitorPlugin(
     name = "ResumableDownload",
@@ -24,7 +27,12 @@ import java.util.concurrent.ConcurrentHashMap
 class ResumableDownloadPlugin : Plugin() {
 
     companion object {
+        private const val TAG = "ResumableDownload"
+        private const val PREFS_NAME = "picsa_resumable_downloads"
+        private const val MAX_DIAGNOSTICS_BUFFER = 100
+
         private var instance: ResumableDownloadPlugin? = null
+        private val diagnosticBuffer = ConcurrentLinkedQueue<JSObject>()
 
         fun emitProgress(snapshot: HttpRangeDownloader.ProgressSnapshot) {
             val inst = instance ?: return
@@ -40,20 +48,47 @@ class ResumableDownloadPlugin : Plugin() {
             inst.notifyListeners("downloadProgress", ret)
         }
 
-        fun emitDiagnostic(downloadId: String, level: String, message: String) {
-            val inst = instance ?: return
+        fun emitDiagnostic(
+            downloadId: String,
+            level: String,
+            message: String,
+            code: String? = null,
+            contextMap: Map<String, Any?>? = null
+        ) {
+            // 1. Android Logcat output for developer inspection
+            val logMessage = if (code != null) "[$downloadId][$code] $message" else "[$downloadId] $message"
+            when (level.lowercase()) {
+                "error" -> Log.e(TAG, logMessage)
+                "warn" -> Log.w(TAG, logMessage)
+                else -> Log.i(TAG, logMessage)
+            }
+
+            // 2. Structured JSObject event payload
             val ret = JSObject().apply {
                 put("downloadId", downloadId)
                 put("level", level)
                 put("message", message)
                 put("timestamp", System.currentTimeMillis())
+                if (code != null) put("code", code)
+                if (!contextMap.isNullOrEmpty()) {
+                    val ctx = JSObject()
+                    for ((k, v) in contextMap) {
+                        ctx.put(k, v)
+                    }
+                    put("context", ctx)
+                }
             }
-            inst.notifyListeners("downloadDiagnostic", ret)
+
+            // 3. Keep in-memory ring buffer for post-mortem diagnostics
+            diagnosticBuffer.add(ret)
+            while (diagnosticBuffer.size > MAX_DIAGNOSTICS_BUFFER) {
+                diagnosticBuffer.poll()
+            }
+
+            // 4. Notify JS listeners if active
+            instance?.notifyListeners("downloadDiagnostic", ret)
         }
     }
-
-    // Cache of active or recent download configs to enable easy resume
-    private val savedOptions = ConcurrentHashMap<String, DownloadConfig>()
 
     private data class DownloadConfig(
         val downloadId: String,
@@ -66,7 +101,49 @@ class ResumableDownloadPlugin : Plugin() {
         val notificationSubtitle: String?,
         val channelName: String?,
         val channelId: String?
-    )
+    ) {
+        fun toJson(): String {
+            val json = JSONObject()
+            json.put("downloadId", downloadId)
+            json.put("url", url)
+            json.put("destinationPath", destinationPath)
+            json.put("directory", directory)
+            if (headersJson != null) json.put("headersJson", headersJson)
+            json.put("notificationEnabled", notificationEnabled)
+            if (notificationTitle != null) json.put("notificationTitle", notificationTitle)
+            if (notificationSubtitle != null) json.put("notificationSubtitle", notificationSubtitle)
+            if (channelName != null) json.put("channelName", channelName)
+            if (channelId != null) json.put("channelId", channelId)
+            return json.toString()
+        }
+
+        companion object {
+            fun fromJson(jsonStr: String): DownloadConfig? {
+                return try {
+                    val json = JSONObject(jsonStr)
+                    DownloadConfig(
+                        downloadId = json.getString("downloadId"),
+                        url = json.getString("url"),
+                        destinationPath = json.getString("destinationPath"),
+                        directory = json.optString("directory", "DATA"),
+                        headersJson = if (json.has("headersJson")) json.getString("headersJson") else null,
+                        notificationEnabled = json.optBoolean("notificationEnabled", false),
+                        notificationTitle = if (json.has("notificationTitle")) json.getString("notificationTitle") else null,
+                        notificationSubtitle = if (json.has("notificationSubtitle")) json.getString("notificationSubtitle") else null,
+                        channelName = if (json.has("channelName")) json.getString("channelName") else null,
+                        channelId = if (json.has("channelId")) json.getString("channelId") else null
+                    )
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
+    private val savedOptions = ConcurrentHashMap<String, DownloadConfig>()
+    private val prefs: SharedPreferences by lazy {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
 
     override fun load() {
         super.load()
@@ -121,8 +198,8 @@ class ResumableDownloadPlugin : Plugin() {
             channelName = channelName,
             channelId = channelId
         )
-        savedOptions[downloadId] = config
 
+        saveConfig(config)
         enqueueWorker(config, call)
     }
 
@@ -135,6 +212,7 @@ class ResumableDownloadPlugin : Plugin() {
         }
 
         DownloadWorker.setPaused(downloadId, true)
+        WorkManager.getInstance(context).cancelUniqueWork("download_$downloadId")
         call.resolve()
     }
 
@@ -146,13 +224,47 @@ class ResumableDownloadPlugin : Plugin() {
             return
         }
 
-        val config = savedOptions[downloadId]
+        // 1. Try in-memory or persisted config
+        var config = loadConfig(downloadId)
+
+        // 2. If options were explicitly provided in the resume call, merge or use them
+        val url = call.getString("url")
+        val destRelativePath = call.getString("destinationPath")
+        if (!url.isNullOrBlank() && !destRelativePath.isNullOrBlank()) {
+            val directory = call.getString("directory") ?: config?.directory ?: "DATA"
+            val destFile: File
+            try {
+                destFile = resolveDestinationFile(destRelativePath, directory)
+            } catch (e: IllegalArgumentException) {
+                call.reject(e.message)
+                return
+            }
+
+            val headersObj = call.getObject("headers")
+            val notificationObj = call.getObject("notification")
+
+            config = DownloadConfig(
+                downloadId = downloadId,
+                url = url,
+                destinationPath = destFile.absolutePath,
+                directory = directory,
+                headersJson = headersObj?.toString() ?: config?.headersJson,
+                notificationEnabled = notificationObj?.optBoolean("enabled", config?.notificationEnabled ?: false) ?: (config?.notificationEnabled ?: false),
+                notificationTitle = notificationObj?.optString("title", config?.notificationTitle ?: "Downloading file") ?: config?.notificationTitle,
+                notificationSubtitle = notificationObj?.optString("subtitle") ?: config?.notificationSubtitle,
+                channelName = notificationObj?.optString("channelName") ?: config?.channelName,
+                channelId = notificationObj?.optString("channelId") ?: config?.channelId
+            )
+            saveConfig(config)
+        }
+
         if (config == null) {
-            call.reject("No existing download found for downloadId: $downloadId. Use download() to initiate.")
+            call.reject("No existing download found for downloadId: $downloadId. Supply options or use download() to initiate.")
             return
         }
 
         DownloadWorker.clearPause(downloadId)
+        DownloadWorker.clearCancel(downloadId)
         enqueueWorker(config, call)
     }
 
@@ -164,9 +276,11 @@ class ResumableDownloadPlugin : Plugin() {
             return
         }
 
+        // Set explicit cancellation flag to abort active socket and trigger file purge in worker
+        DownloadWorker.setCancelled(downloadId, true)
         WorkManager.getInstance(context).cancelUniqueWork("download_$downloadId")
 
-        val config = savedOptions.remove(downloadId)
+        val config = removeConfig(downloadId)
         if (config != null) {
             val destFile = File(config.destinationPath)
             val partFile = File(destFile.absolutePath + ".part")
@@ -202,15 +316,17 @@ class ResumableDownloadPlugin : Plugin() {
         }
 
         val info = workInfos[0]
+        val output = info.outputData
+        val workerStatus = output.getString(DownloadWorker.KEY_OUTPUT_STATUS)
+
         val statusStr = when (info.state) {
             WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING -> "downloading"
-            WorkInfo.State.SUCCEEDED -> "completed"
+            WorkInfo.State.SUCCEEDED -> workerStatus ?: "completed"
             WorkInfo.State.FAILED -> "error"
             WorkInfo.State.CANCELLED -> "cancelled"
             WorkInfo.State.BLOCKED -> "downloading"
         }
 
-        val output = info.outputData
         val ret = JSObject().apply {
             put("downloadId", downloadId)
             put("status", statusStr)
@@ -247,7 +363,14 @@ class ResumableDownloadPlugin : Plugin() {
                 if (json.has("etag")) {
                     etag = json.getString("etag")
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                emitDiagnostic(
+                    downloadId = "inspect",
+                    level = "warn",
+                    message = "Could not parse meta sidecar during getFileStatus: ${e.message}",
+                    code = "SIDECAR_READ_ERROR"
+                )
+            }
         }
 
         val ret = JSObject().apply {
@@ -311,7 +434,7 @@ class ResumableDownloadPlugin : Plugin() {
             workRequest
         )
 
-        // Observe completion on the main thread
+        // Observe worker completion on main thread to resolve or reject the Capacitor PluginCall
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             val liveData = workManager.getWorkInfoByIdLiveData(workRequest.id)
             val observer = object : Observer<WorkInfo?> {
@@ -319,24 +442,48 @@ class ResumableDownloadPlugin : Plugin() {
                     if (value == null) return
                     if (value.state.isFinished) {
                         liveData.removeObserver(this)
+                        val output = value.outputData
                         when (value.state) {
                             WorkInfo.State.SUCCEEDED -> {
-                                val output = value.outputData
+                                val status = output.getString(DownloadWorker.KEY_OUTPUT_STATUS) ?: "completed"
                                 val ret = JSObject().apply {
                                     put("downloadId", config.downloadId)
+                                    put("status", status)
                                     put("uri", output.getString(DownloadWorker.KEY_OUTPUT_URI) ?: "")
                                     put("size", output.getLong(DownloadWorker.KEY_OUTPUT_SIZE, 0L))
                                     put("resumed", output.getBoolean(DownloadWorker.KEY_OUTPUT_RESUMED, false))
                                 }
+                                if (status == "completed") {
+                                    removeConfig(config.downloadId)
+                                }
                                 call.resolve(ret)
                             }
                             WorkInfo.State.CANCELLED -> {
-                                call.reject("Download was cancelled.")
+                                val errorData = JSObject().apply {
+                                    put("downloadId", config.downloadId)
+                                    put("exceptionClass", "CancellationException")
+                                    put("canResume", false)
+                                    put("bytesDownloaded", 0L)
+                                }
+                                call.reject("Download was cancelled.", "CancellationException", errorData)
                             }
                             WorkInfo.State.FAILED -> {
-                                val errMsg = value.outputData.getString(DownloadWorker.KEY_OUTPUT_ERROR)
+                                val errMsg = output.getString(DownloadWorker.KEY_OUTPUT_ERROR)
                                     ?: "Download failed."
-                                call.reject(errMsg)
+                                val errClass = output.getString(DownloadWorker.KEY_OUTPUT_ERROR_CLASS)
+                                    ?: "IOException"
+                                val canResume = output.getBoolean(DownloadWorker.KEY_OUTPUT_CAN_RESUME, false)
+                                val size = output.getLong(DownloadWorker.KEY_OUTPUT_SIZE, 0L)
+                                val httpStatus = output.getInt(DownloadWorker.KEY_OUTPUT_HTTP_STATUS, -1)
+
+                                val errorData = JSObject().apply {
+                                    put("downloadId", config.downloadId)
+                                    put("exceptionClass", errClass)
+                                    put("canResume", canResume)
+                                    put("bytesDownloaded", size)
+                                    if (httpStatus > 0) put("httpStatus", httpStatus)
+                                }
+                                call.reject(errMsg, errClass, errorData)
                             }
                             else -> {}
                         }
@@ -347,6 +494,11 @@ class ResumableDownloadPlugin : Plugin() {
         }
     }
 
+    /**
+     * Resolves destination file inside the sandboxed Capacitor directory.
+     * Uses canonicalPath string comparison to remain compatible with Android 7.0/7.1 (API 24/25)
+     * without triggering java.nio.file.Path NewApi lint errors.
+     */
     private fun resolveDestinationFile(relativePath: String, directory: String): File {
         val baseDir: File = when (directory.uppercase()) {
             "CACHE" -> context.cacheDir
@@ -357,7 +509,11 @@ class ResumableDownloadPlugin : Plugin() {
         val cleaned = relativePath.trimStart('/')
         val canonicalBase = baseDir.canonicalFile
         val file = File(canonicalBase, cleaned).canonicalFile
-        if (file != canonicalBase && !file.toPath().startsWith(canonicalBase.toPath())) {
+
+        val basePrefix = canonicalBase.canonicalPath.trimEnd(File.separatorChar) + File.separatorChar
+        val filePath = file.canonicalPath
+
+        if (filePath != canonicalBase.canonicalPath && !filePath.startsWith(basePrefix)) {
             throw IllegalArgumentException("Destination path must remain inside the selected directory.")
         }
         val parent = file.parentFile
@@ -365,5 +521,24 @@ class ResumableDownloadPlugin : Plugin() {
             parent.mkdirs()
         }
         return file
+    }
+
+    private fun saveConfig(config: DownloadConfig) {
+        savedOptions[config.downloadId] = config
+        prefs.edit().putString(config.downloadId, config.toJson()).apply()
+    }
+
+    private fun loadConfig(downloadId: String): DownloadConfig? {
+        savedOptions[downloadId]?.let { return it }
+        val jsonStr = prefs.getString(downloadId, null) ?: return null
+        return DownloadConfig.fromJson(jsonStr)?.also {
+            savedOptions[downloadId] = it
+        }
+    }
+
+    private fun removeConfig(downloadId: String): DownloadConfig? {
+        val removed = savedOptions.remove(downloadId)
+        prefs.edit().remove(downloadId).apply()
+        return removed
     }
 }

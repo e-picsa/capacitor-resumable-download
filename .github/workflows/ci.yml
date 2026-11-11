@@ -29,8 +29,14 @@ jobs:
       - name: Build plugin
         run: yarn build
 
+      - name: Build example-app
+        run: |
+          cd example-app
+          yarn install --frozen-lockfile
+          yarn build
+
   test-android:
-    name: JVM Unit Tests (MockWebServer)
+    name: Android Lint & Unit Tests (MockWebServer)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -56,6 +62,10 @@ jobs:
 
       - name: Make Gradle wrapper executable
         run: chmod +x android/gradlew
+
+      - name: Run Android Lint (SDK 24-35 compatibility)
+        run: ./gradlew :lintDebug
+        working-directory: android
 
       - name: Run Android JVM Unit Tests
         run: ./gradlew test
