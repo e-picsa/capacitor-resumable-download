@@ -1,0 +1,56 @@
+# PR-Agent Configuration
+# Documentation: https://docs.pr-agent.ai/
+
+# https://docs.pr-agent.ai/installation/github/?h=fallback_models#using-configuration-files
+# https://docs.pr-agent.ai/tools/describe/#configuration-options
+
+# https://ai.google.dev/gemini-api/docs/models
+
+[config]
+model = "gemini/gemini-3.8-flash"
+fallback_models = ["openrouter/openai/gpt-6-luna"]
+# max tokens required for newer models not known by current version of pr-agent used in actions 
+# use lowest common of fallback models
+custom_model_max_tokens = 922000
+max_model_tokens = 922000
+ai_timeout = 180
+temperature = 0.1
+reasoning_effort = "low"
+
+# Exclude files from PR-Agent analysis
+[ignore]
+glob = ["**/*.csv"]
+
+# Dynamic Context & Patch Expansion Settings
+patch_extension_skip_types = [".md", ".txt", ".lock", ".csv"]
+max_extra_lines_before_dynamic_context = 15
+patch_extra_lines_before = 5
+patch_extra_lines_after = 5
+
+# 1. Controls /describe tool
+[pr_description]
+publish_description_as_comment = false
+keep_original_user_description = true
+use_description_markers = true
+
+# 2. Controls /review tool
+[pr_reviewer]
+enable_inline_comments = false
+num_code_suggestions = 3
+extra_instructions = """
+Focus strictly on material issues: logic errors, race conditions, edge cases, missing error boundaries, and security vulnerabilities.
+Ignore minor style formatting, variable naming preferences, and cosmetic refactoring.
+
+When a linked issue is present:
+- Cross-check the diff against the issue's requirements and reproduction steps, explicitly noting if any requirement or edge case was missed or only partially addressed.
+- Assess whether the fix properly addresses the underlying root cause described in the issue without introducing regressions to related workflows.
+"""
+
+# 3. Controls /improve tool
+[pr_code_suggestions]
+num_code_suggestions_per_chunk = 4
+suggestions_score_threshold = 6
+dual_publishing_score_threshold = 8
+extra_instructions = """
+Focus exclusively on high-confidence bug fixes, significant performance improvements, resource leaks, or critical security vulnerabilities.
+"""
