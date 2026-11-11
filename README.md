@@ -71,7 +71,7 @@ const progressSub = await ResumableDownload.addListener('downloadProgress', (eve
 const result = await ResumableDownload.download({
   downloadId: 'farmer-training-video',
   url: 'https://cdn.example.com/videos/climate-smart-agriculture.mp4',
-  destinationPath: 'picsa_extension/resources/climate-smart-agriculture.mp4',
+  destinationPath: 'downloads/climate-smart-agriculture.mp4',
   directory: 'DATA', // 'DATA' (default) | 'CACHE' | 'EXTERNAL'
   notification: {
     enabled: true,
@@ -100,7 +100,7 @@ await ResumableDownload.cancel({ downloadId: 'farmer-training-video' });
 
 ```ts
 const status = await ResumableDownload.getFileStatus({
-  destinationPath: 'picsa_extension/resources/climate-smart-agriculture.mp4',
+  destinationPath: 'downloads/climate-smart-agriculture.mp4',
   directory: 'DATA',
 });
 

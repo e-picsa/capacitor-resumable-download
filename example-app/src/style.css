@@ -202,3 +202,63 @@ input[type="text"]:focus {
   align-items: center;
   margin-bottom: 0.5rem;
 }
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.task-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.task-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background-color: #0b1120;
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+  color: var(--text-main);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.task-row.selected {
+  border-color: var(--primary);
+}
+
+.task-name {
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-id {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.hint code {
+  color: var(--text-main);
+}
+
+.preset-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

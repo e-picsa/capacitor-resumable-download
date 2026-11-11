@@ -173,10 +173,10 @@ class ResumableDownloadPlugin : Plugin() {
         val notificationObj = call.getObject("notification")
 
         val notificationEnabled = notificationObj?.optBoolean("enabled", false) ?: false
-        val notificationTitle = notificationObj?.optString("title", "Downloading file")
-        val notificationSubtitle = notificationObj?.optString("subtitle")
-        val channelName = notificationObj?.optString("channelName")
-        val channelId = notificationObj?.optString("channelId")
+        val notificationTitle = notificationObj?.getString("title", "Downloading file")
+        val notificationSubtitle = notificationObj?.getString("subtitle")
+        val channelName = notificationObj?.getString("channelName")?.ifBlank { null }
+        val channelId = notificationObj?.getString("channelId")?.ifBlank { null }
 
         val destFile: File
         try {
@@ -251,10 +251,10 @@ class ResumableDownloadPlugin : Plugin() {
                 directory = directory,
                 headersJson = headersObj?.toString() ?: config?.headersJson,
                 notificationEnabled = notificationObj?.optBoolean("enabled", config?.notificationEnabled ?: false) ?: (config?.notificationEnabled ?: false),
-                notificationTitle = notificationObj?.optString("title", config?.notificationTitle ?: "Downloading file") ?: config?.notificationTitle,
-                notificationSubtitle = notificationObj?.optString("subtitle") ?: config?.notificationSubtitle,
-                channelName = notificationObj?.optString("channelName") ?: config?.channelName,
-                channelId = notificationObj?.optString("channelId") ?: config?.channelId
+                notificationTitle = notificationObj?.getString("title", config?.notificationTitle ?: "Downloading file") ?: config?.notificationTitle,
+                notificationSubtitle = notificationObj?.getString("subtitle") ?: config?.notificationSubtitle,
+                channelName = notificationObj?.getString("channelName")?.ifBlank { null } ?: config?.channelName,
+                channelId = notificationObj?.getString("channelId")?.ifBlank { null } ?: config?.channelId
             )
             saveConfig(config)
         }

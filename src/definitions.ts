@@ -13,7 +13,7 @@ export interface DownloadOptions {
 
   /**
    * Relative or absolute destination path inside the specified Capacitor directory.
-   * Example: 'picsa_extension/resources/intro.mp4'
+   * Example: 'downloads/intro.mp4'
    */
   destinationPath: string;
 

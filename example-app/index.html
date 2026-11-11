@@ -18,21 +18,44 @@
         
         <div class="form-group">
           <label for="urlInput">Source URL</label>
-          <input 
-            type="text" 
-            id="urlInput" 
-            value="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" 
+          <input
+            type="text"
+            id="urlInput"
+            value="https://proof.ovh.net/files/10Mb.dat"
             placeholder="https://..."
           />
+          <div class="preset-row">
+            <button id="preset10MB" class="btn-sm" type="button">10 MB quick test</button>
+            <button id="preset100MB" class="btn-sm" type="button">100 MB pause/resume</button>
+            <button id="presetLocal" class="btn-sm" type="button">Local throttled server</button>
+          </div>
+          <p class="hint">
+            Remote presets verified with <code>yarn verify:cdn</code> (HTTP 206 + strong ETag).
+            For deterministic pause/resume testing, run <code>yarn serve:test-file</code> and use
+            <code>http://10.0.2.2:8080/large.bin?throttle_kbps=200</code> (emulator loopback).
+          </p>
         </div>
 
         <div class="form-group">
           <label for="destInput">Destination Path (inside Directory.DATA)</label>
-          <input 
-            type="text" 
-            id="destInput" 
-            value="picsa_extension/resources/big_buck_bunny.mp4" 
+          <input
+            type="text"
+            id="destInput"
+            value="downloads/10Mb.dat"
           />
+        </div>
+
+        <div class="form-group">
+          <label for="downloadIdInput">Download ID (auto-derived from destination; one task per file)</label>
+          <input
+            type="text"
+            id="downloadIdInput"
+            value="downloads-10Mb-dat"
+          />
+          <p class="hint">
+            Changing URL/destination targets a different task — progress and pause/resume
+            follow the selected task below. Each file keeps its own `.part` resume state.
+          </p>
         </div>
 
         <div class="form-row">
@@ -52,8 +75,18 @@
         </div>
       </div>
 
+      <div class="card tasks-card">
+        <div class="logs-header">
+          <h2>Downloads</h2>
+          <button id="btnRefreshAll" class="btn-sm">Refresh All</button>
+        </div>
+        <div id="taskList" class="task-list">
+          <div class="task-empty">No downloads yet. Configure above and press Start Download.</div>
+        </div>
+      </div>
+
       <div class="card monitor-card">
-        <h2>Live Monitor</h2>
+        <h2>Live Monitor <span id="lblSelected" class="selected-id"></span></h2>
         <div class="metric-row">
           <div>Status: <span id="lblStatus" class="badge">idle</span></div>
           <div>Progress: <span id="lblProgress">0%</span></div>
@@ -76,7 +109,10 @@
       <div class="card logs-card">
         <div class="logs-header">
           <h2>Telemetry & Event Logs</h2>
-          <button id="btnClearLogs" class="btn-sm">Clear Logs</button>
+          <div>
+            <button id="btnExportLogs" class="btn-sm">Export Logs</button>
+            <button id="btnClearLogs" class="btn-sm">Clear Logs</button>
+          </div>
         </div>
         <div id="logConsole" class="console-box"></div>
       </div>
