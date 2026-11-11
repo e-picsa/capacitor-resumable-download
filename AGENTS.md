@@ -56,6 +56,30 @@ cd android && ./gradlew test
 yarn verify:cdn <url>
 ```
 
+### Serve Local Deterministic Test File (Range + ETag + throttle)
+
+```bash
+yarn serve:test-file                 # 50MB on :8080, emulator via http://10.0.2.2:8080/large.bin?throttle_kbps=200
+yarn serve:test-file --size-mb 5 --port 8080
+```
+
+### Demo App (canonical commands — use these, not manual cap/gradle steps)
+
+```bash
+yarn demo:sync     # plugin build -> sync-plugin -> example-app build -> cap sync
+yarn demo:build    # demo:sync + stale-check + assembleDebug
+yarn demo:install  # adb install -r <apk> (add `-s <serial>` for a specific device)
+```
+
+> Why `scripts/sync-plugin.mjs` exists: yarn v1 `file:..` deps are **copied** into
+> `example-app/node_modules` at install time, not symlinked — so Capacitor/Gradle
+> silently build stale native code after editing `android/`. `demo:sync` refreshes
+> the copy; `demo:build` fails fast via `--check` if it is stale. Documenting alone
+> is not sufficient because the failure mode is silent (new JS, old Kotlin).
+
+See [docs/demo-testing.md](docs/demo-testing.md) for agent-driven emulator workflow
+(snapshot/press/fill via `agent-device`, logcat tags, and pause/resume presets).
+
 ### Code Formatting & Linting
 
 ```bash

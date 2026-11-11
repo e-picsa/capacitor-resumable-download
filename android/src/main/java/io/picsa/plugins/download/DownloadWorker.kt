@@ -110,10 +110,13 @@ class DownloadWorker(
         val destPath = inputData.getString(KEY_DEST_PATH) ?: return Result.failure()
         val headersJson = inputData.getString(KEY_HEADERS_JSON)
         val notificationEnabled = inputData.getBoolean(KEY_NOTIFICATION_ENABLED, false)
-        val title = inputData.getString(KEY_NOTIFICATION_TITLE) ?: "Downloading file"
+        val rawTitle = inputData.getString(KEY_NOTIFICATION_TITLE)
+        val title = if (rawTitle.isNullOrBlank()) "Downloading file" else rawTitle
         val subtitle = inputData.getString(KEY_NOTIFICATION_SUBTITLE)
-        val channelId = inputData.getString(KEY_CHANNEL_ID) ?: DEFAULT_CHANNEL_ID
-        val channelName = inputData.getString(KEY_CHANNEL_NAME) ?: DEFAULT_CHANNEL_NAME
+        val rawChannelId = inputData.getString(KEY_CHANNEL_ID)
+        val channelId = if (rawChannelId.isNullOrBlank()) DEFAULT_CHANNEL_ID else rawChannelId
+        val rawChannelName = inputData.getString(KEY_CHANNEL_NAME)
+        val channelName = if (rawChannelName.isNullOrBlank()) DEFAULT_CHANNEL_NAME else rawChannelName
 
         notificationId = kotlin.math.abs(downloadId.hashCode())
 
@@ -136,7 +139,17 @@ class DownloadWorker(
             }
         }
 
-        createNotificationChannel(channelId, channelName)
+        runCatching {
+            createNotificationChannel(channelId, channelName)
+        }.onFailure { err ->
+            ResumableDownloadPlugin.emitDiagnostic(
+                downloadId = downloadId,
+                level = "warn",
+                message = "Failed to create notification channel (${err.javaClass.simpleName}: ${err.message}). Proceeding without channel.",
+                code = "NOTIFICATION_CHANNEL_FAILED",
+                contextMap = mapOf("exceptionClass" to err.javaClass.simpleName)
+            )
+        }
 
         if (notificationEnabled) {
             // Android 13+ (API 33+) notification permission verification
@@ -326,10 +339,12 @@ class DownloadWorker(
     }
 
     private fun createNotificationChannel(channelId: String, channelName: String) {
+        val safeChannelId = if (channelId.isBlank()) DEFAULT_CHANNEL_ID else channelId
+        val safeChannelName = if (channelName.isBlank()) DEFAULT_CHANNEL_NAME else channelName
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                channelId,
-                channelName,
+                safeChannelId,
+                safeChannelName,
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Displays file download progress"
