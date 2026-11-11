@@ -110,6 +110,15 @@ $AGENT screenshot /tmp/demo.png
 
 ## 6. Android 7 (API 24) testing
 
+Support statement: keep API 24 as the **build** floor (it's already there and
+costs nothing), but treat **7.1 as the minimum test target for remote-HTTPS
+scenarios**, and accept local-server-only testing on 7.0. Rationale: 7.0's
+system trust store lacks the ISRG roots (§6c) — an unfixable platform gap that
+7.1 closes — while Capacitor 9 will lift the floor to API 26 (Android 8)
+anyway. Don't invest in 7.0-specific workarounds (custom trust anchors, legacy
+JS bundles); if `older_device` is ever recreated, prefer a 7.1 image so it
+represents the actual minimum supported config instead of the degraded corner.
+
 The native plugin is API-24-safe by design (foreground-service branching,
 NIO reflection fallback, `canonicalPath` checks), and `older_device` exists to
 prove it. But stock API 24 emulator images ship System WebView **Chrome 53**
