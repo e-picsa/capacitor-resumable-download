@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    name: Lint & Build JS/TS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint formatting
+        run: yarn lint
+
+      - name: Build plugin
+        run: yarn build
+
+  test-android:
+    name: JVM Unit Tests (MockWebServer)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x android/gradlew
+
+      - name: Run Android JVM Unit Tests
+        run: ./gradlew test
+        working-directory: android

@@ -1,0 +1,43 @@
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Android artifacts
+android/build/
+android/.gradle/
+android/local.properties
+android/*.iml
+android/.idea/
+android/app/build/
+.gradle/
+
+# Example app artifacts
+example-app/node_modules/
+example-app/dist/
+example-app/android/.gradle/
+example-app/android/build/
+example-app/android/app/build/
+example-app/android/local.properties
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test & coverage
+coverage/
+*.part
+*.part.meta.json

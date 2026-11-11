@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'capacitor-resumable-download'
+
+def capacitorAndroidDir = new File(settingsDir, '../node_modules/@capacitor/android/capacitor')
+if (capacitorAndroidDir.exists()) {
+    include ':capacitor-android'
+    project(':capacitor-android').projectDir = capacitorAndroidDir
+}

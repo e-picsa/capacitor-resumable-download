@@ -1,0 +1,63 @@
+{
+  "name": "@picsa/capacitor-resumable-download",
+  "version": "0.0.1",
+  "description": "Capacitor 8 plugin for robust, resumable file downloads with HTTP Range support, WorkManager background execution, and pause/resume capabilities.",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "unpkg": "dist/plugin.js",
+  "files": [
+    "android/",
+    "dist/",
+    "package.json"
+  ],
+  "author": "e-PICSA",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/e-picsa/capacitor-resumable-download.git"
+  },
+  "bugs": {
+    "url": "https://github.com/e-picsa/capacitor-resumable-download/issues"
+  },
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "native",
+    "download",
+    "resumable",
+    "http-range",
+    "workmanager",
+    "android"
+  ],
+  "scripts": {
+    "verify:cdn": "node scripts/verify-cdn.mjs",
+    "clean": "rimraf ./dist",
+    "watch": "tsc --watch",
+    "build:types": "tsc",
+    "build:bundle": "rollup -c rollup.config.mjs",
+    "build": "npm run clean && npm run build:types && npm run build:bundle",
+    "test:android": "cd android && ./gradlew test",
+    "test": "npm run test:android",
+    "fmt": "prettier --write \"**/*.{ts,js,mjs,json,md}\"",
+    "lint": "prettier --check \"**/*.{ts,js,mjs,json,md}\"",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "prettier": "^3.2.5",
+    "rimraf": "^5.0.5",
+    "rollup": "^4.9.6",
+    "typescript": "^5.4.0"
+  },
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  }
+}

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Capacitor Resumable Download Demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div class="app-container">
+      <header>
+        <h1>⚡ Resumable Download Demo</h1>
+        <p class="subtitle">Test HTTP Range downloads, WorkManager execution, and pause/resume resilience.</p>
+      </header>
+
+      <div class="card config-card">
+        <h2>Download Configuration</h2>
+        
+        <div class="form-group">
+          <label for="urlInput">Source URL</label>
+          <input 
+            type="text" 
+            id="urlInput" 
+            value="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" 
+            placeholder="https://..."
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="destInput">Destination Path (inside Directory.DATA)</label>
+          <input 
+            type="text" 
+            id="destInput" 
+            value="picsa_extension/resources/big_buck_bunny.mp4" 
+          />
+        </div>
+
+        <div class="form-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="notificationToggle" checked />
+            <span>Enable Foreground Notification (Android WorkManager)</span>
+          </label>
+        </div>
+
+        <div class="actions-grid">
+          <button id="btnStart" class="btn btn-primary">Start Download</button>
+          <button id="btnPause" class="btn btn-warning" disabled>Pause</button>
+          <button id="btnResume" class="btn btn-success" disabled>Resume</button>
+          <button id="btnCancel" class="btn btn-danger" disabled>Cancel</button>
+          <button id="btnCheckStatus" class="btn btn-secondary">Get Status</button>
+          <button id="btnFileStatus" class="btn btn-secondary">Check Disk File</button>
+        </div>
+      </div>
+
+      <div class="card monitor-card">
+        <h2>Live Monitor</h2>
+        <div class="metric-row">
+          <div>Status: <span id="lblStatus" class="badge">idle</span></div>
+          <div>Progress: <span id="lblProgress">0%</span></div>
+          <div>Throughput: <span id="lblThroughput">0 KB/s</span></div>
+        </div>
+
+        <div class="progress-bar-container">
+          <div id="progressBar" class="progress-bar-fill" style="width: 0%"></div>
+        </div>
+        <div class="byte-counts">
+          <span id="lblBytes">0 MB / 0 MB</span>
+        </div>
+      </div>
+
+      <div class="card disk-card">
+        <h2>Disk Inspection</h2>
+        <div id="diskDetails">Click "Check Disk File" to inspect destination and .part sidecars.</div>
+      </div>
+
+      <div class="card logs-card">
+        <div class="logs-header">
+          <h2>Telemetry & Event Logs</h2>
+          <button id="btnClearLogs" class="btn-sm">Clear Logs</button>
+        </div>
+        <div id="logConsole" class="console-box"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
