@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Resumable Download Demo</string>
+    <string name="title_activity_main">Resumable Download Demo</string>
+    <string name="package_name">io.picsa.plugins.download.example</string>
+    <string name="custom_url_scheme">io.picsa.plugins.download.example</string>
+</resources>
