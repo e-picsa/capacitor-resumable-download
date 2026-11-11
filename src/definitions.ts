@@ -61,15 +61,37 @@ export interface DownloadDiagnosticEvent {
   level: 'info' | 'warn' | 'error';
   message: string;
   timestamp: number;
+  /**
+   * Machine-readable error or warning code for telemetry/Sentry classification.
+   * Examples: 'FOREGROUND_SERVICE_FAILED', 'NOTIFICATION_PERMISSION_MISSING',
+   * 'RANGE_RESET_200', 'RANGE_NOT_SATISFIABLE_416', 'WEAK_ETAG_DETECTED',
+   * 'WORKER_PREEMPTED', 'SOCKET_DROP_RESUMABLE', 'NIO_MOVE_FALLBACK'
+   */
+  code?: string;
+  /**
+   * Additional context details for debugging or Sentry breadcrumb attachments.
+   */
+  context?: Record<string, any>;
+}
+
+export interface DownloadErrorData {
+  downloadId: string;
+  exceptionClass: string;
+  canResume: boolean;
+  bytesDownloaded: number;
+  httpStatus?: number;
 }
 
 export interface DownloadResult {
   downloadId: string;
-  uri: string; // Native file:// URI matching Filesystem format
+  uri: string; // Native file:// URI matching Filesystem format (empty string if paused)
   size: number;
   mimeType?: string;
   resumed: boolean;
+  status: 'completed' | 'paused';
 }
+
+export type ResumeOptions = { downloadId: string } & Partial<DownloadOptions>;
 
 export interface DownloadStatus {
   downloadId: string;
@@ -105,9 +127,9 @@ export interface ResumableDownloadPlugin {
   pause(options: { downloadId: string }): Promise<void>;
 
   /**
-   * Resumes a paused download task.
+   * Resumes a paused download task using existing saved options or supplied options.
    */
-  resume(options: { downloadId: string }): Promise<DownloadResult>;
+  resume(options: ResumeOptions): Promise<DownloadResult>;
 
   /**
    * Cancels a download task and cleans up any partial `.part` and `.part.meta.json` files.

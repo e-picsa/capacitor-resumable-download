@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   preview:
     runs-on: ubuntu-latest
@@ -14,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: 'yarn'
 
       - name: Install dependencies
@@ -24,4 +28,5 @@ jobs:
         run: yarn build
 
       - name: Publish Preview to pkg.pr.new
+        continue-on-error: true
         run: npx pkg-pr-new publish

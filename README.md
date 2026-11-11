@@ -109,6 +109,40 @@ console.log('Partial download in progress:', status.partExists);
 console.log('Bytes downloaded so far:', status.partSize);
 ```
 
+### 4. Telemetry & Sentry Integration
+
+The plugin emits structured telemetry events (`downloadDiagnostic`) with machine-readable codes and context. Consumer applications can pipe these directly to Sentry as breadcrumbs or issues:
+
+```ts
+import * as Sentry from '@sentry/capacitor'; // or any monitoring client
+
+// Forward diagnostic events to Sentry breadcrumbs
+await ResumableDownload.addListener('downloadDiagnostic', (event) => {
+  if (event.level === 'error') {
+    Sentry.captureMessage(`[Download] ${event.message}`, {
+      level: 'error',
+      extra: { downloadId: event.downloadId, code: event.code, ...event.context },
+    });
+  } else {
+    Sentry.addBreadcrumb({
+      category: 'download',
+      message: event.message,
+      level: event.level,
+      data: { code: event.code, ...event.context },
+    });
+  }
+});
+
+// Structured error rejections
+try {
+  await ResumableDownload.download(options);
+} catch (err: any) {
+  // err.code is the Java exception class (e.g. 'SocketTimeoutException', 'HttpException')
+  // err.data contains { downloadId, exceptionClass, canResume, bytesDownloaded, httpStatus }
+  Sentry.captureException(err, { extra: err.data });
+}
+```
+
 ---
 
 ## Verifying CDN Byte-Range Support

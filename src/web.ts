@@ -7,6 +7,7 @@ import type {
   DownloadStatus,
   FileStatus,
   PermissionStatus,
+  ResumeOptions,
   ResumableDownloadPlugin,
 } from './definitions';
 
@@ -138,6 +139,7 @@ export class ResumableDownloadWeb extends WebPlugin implements ResumableDownload
         size: bytesDownloaded,
         mimeType,
         resumed: bytesDownloaded > 0 && response.status === 206,
+        status: 'completed',
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -157,6 +159,7 @@ export class ResumableDownloadWeb extends WebPlugin implements ResumableDownload
             uri: '',
             size: bytesDownloaded,
             resumed: true,
+            status: 'paused',
           };
         }
         downloadState.status = 'cancelled';
@@ -190,12 +193,20 @@ export class ResumableDownloadWeb extends WebPlugin implements ResumableDownload
     }
   }
 
-  async resume(options: { downloadId: string }): Promise<DownloadResult> {
-    const download = this.activeDownloads.get(options.downloadId);
-    if (!download) {
+  async resume(options: ResumeOptions): Promise<DownloadResult> {
+    const existing = this.activeDownloads.get(options.downloadId);
+    const downloadOptions: DownloadOptions = {
+      ...(existing?.options ?? {
+        downloadId: options.downloadId,
+        url: options.url ?? '',
+        destinationPath: options.destinationPath ?? '',
+      }),
+      ...options,
+    };
+    if (!downloadOptions.url || !downloadOptions.destinationPath) {
       throw new Error(`Download ${options.downloadId} not found to resume.`);
     }
-    return this.download(download.options);
+    return this.download(downloadOptions);
   }
 
   async cancel(options: { downloadId: string }): Promise<void> {
@@ -250,12 +261,20 @@ export class ResumableDownloadWeb extends WebPlugin implements ResumableDownload
     this.notifyListeners('downloadProgress', event);
   }
 
-  private emitDiagnostic(downloadId: string, level: 'info' | 'warn' | 'error', message: string) {
+  private emitDiagnostic(
+    downloadId: string,
+    level: 'info' | 'warn' | 'error',
+    message: string,
+    code?: string,
+    context?: Record<string, any>,
+  ) {
     const event: DownloadDiagnosticEvent = {
       downloadId,
       level,
       message,
       timestamp: Date.now(),
+      code,
+      context,
     };
     this.notifyListeners('downloadDiagnostic', event);
   }

@@ -6,6 +6,13 @@
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
   "unpkg": "dist/plugin.js",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/plugin.cjs.js"
+    }
+  },
   "files": [
     "android/",
     "dist/",
@@ -36,12 +43,16 @@
     "watch": "tsc --watch",
     "build:types": "tsc",
     "build:bundle": "rollup -c rollup.config.mjs",
-    "build": "npm run clean && npm run build:types && npm run build:bundle",
+    "build": "yarn clean && yarn build:types && yarn build:bundle",
     "test:android": "cd android && ./gradlew test",
-    "test": "npm run test:android",
+    "test": "yarn test:android",
+    "lint:android": "cd android && ./gradlew :lintDebug",
     "fmt": "prettier --write \"**/*.{ts,js,mjs,json,md}\"",
     "lint": "prettier --check \"**/*.{ts,js,mjs,json,md}\"",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "yarn build"
+  },
+  "engines": {
+    "node": ">=24.0.0"
   },
   "peerDependencies": {
     "@capacitor/core": "^8.0.0"

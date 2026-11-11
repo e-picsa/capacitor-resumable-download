@@ -61,6 +61,7 @@ yarn verify:cdn <url>
 ```bash
 yarn fmt
 yarn lint
+yarn lint:android # Android SDK 24-35 compatibility check
 ```
 
 ---
@@ -71,5 +72,7 @@ When modifying download or resume behavior, ensure the MockWebServer test suite 
 
 - **HTTP 206 Partial Content**: Verifies correct `Range: bytes=<offset>-` and `If-Range: <etag>` headers sent, and bytes appended accurately.
 - **HTTP 200 OK Reset**: Verifies that when a server does not honor range or ETag changed, the `.part` file is truncated and re-downloaded from byte 0.
-- **HTTP 416 Range Not Satisfiable**: Verifies that when byte range is invalid or server file changed, the corrupt `.part` is removed and re-downloaded.
+- **HTTP 416 Range Not Satisfiable**: Verifies that when byte range is invalid or server file changed, the corrupt `.part` is removed and re-downloaded (with max 1 retry).
 - **Mid-Stream Socket Drop**: Simulates dropped Wi-Fi / cellular data mid-transfer, asserts the `.part` retains valid bytes, and verifies subsequent resume finishes the entire payload without corruption.
+- **Worker Preemption vs. Explicit Cancellation**: Asserts that system preemption / worker stops preserve `.part` files for resumption, whereas explicit user `cancel()` purges them.
+- **Weak ETag & Identity Encoding**: Asserts that weak ETags (`W/"..."`) omit `If-Range` per RFC 9110 with diagnostic emission, and `Accept-Encoding: identity` is sent.

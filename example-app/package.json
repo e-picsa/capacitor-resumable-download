@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "dependencies": {
     "@capacitor/android": "^8.0.0",
     "@capacitor/app": "^8.0.0",

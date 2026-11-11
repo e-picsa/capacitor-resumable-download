@@ -153,6 +153,7 @@ class HttpRangeDownloaderTest {
         metaFile.writeText(oldSidecar.toJson())
 
         var diagnosticWarnCalled = false
+        var diagnosticCode: String? = null
 
         // Server rejects If-Range and sends 200 OK with new content
         server.enqueue(
@@ -169,8 +170,11 @@ class HttpRangeDownloaderTest {
                 url = server.url("/reset.bin").toString(),
                 destinationFile = destFile
             ),
-            onDiagnostic = { level, _ ->
-                if (level == "warn") diagnosticWarnCalled = true
+            onDiagnostic = { level, _, code, _ ->
+                if (level == "warn") {
+                    diagnosticWarnCalled = true
+                    diagnosticCode = code
+                }
             }
         )
 
@@ -178,6 +182,7 @@ class HttpRangeDownloaderTest {
         val success = outcome as HttpRangeDownloader.DownloadOutcome.Success
         assertFalse("Should not be treated as partial resume when server returned 200", success.resumed)
         assertTrue(diagnosticWarnCalled)
+        assertEquals("RANGE_RESET_200", diagnosticCode)
         assertEquals(totalSize.toLong(), destFile.length())
         assertArrayEquals(updatedPayload, destFile.readBytes())
     }
@@ -228,6 +233,34 @@ class HttpRangeDownloaderTest {
     }
 
     @Test
+    fun testRepeated416FailsCleanlyWithoutInfiniteLoop() {
+        val destFile = File(tempFolder.root, "persist_416.bin")
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+
+        partFile.writeBytes(ByteArray(2_000) { 0 })
+        metaFile.writeText(HttpRangeDownloader.MetaSidecar(server.url("/416").toString(), "\"etag\"", 2000L).toJson())
+
+        // Both requests return 416 (broken server configuration)
+        server.enqueue(MockResponse().setResponseCode(416).setHeader("Content-Range", "bytes */0"))
+        server.enqueue(MockResponse().setResponseCode(416).setHeader("Content-Range", "bytes */0"))
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-416-persist",
+                url = server.url("/416").toString(),
+                destinationFile = destFile
+            )
+        )
+
+        assertTrue("Outcome should be Failure", outcome is HttpRangeDownloader.DownloadOutcome.Failure)
+        val failure = outcome as HttpRangeDownloader.DownloadOutcome.Failure
+        assertFalse("Cannot resume after repeated 416", failure.canResume)
+        assertTrue(failure.error is HttpRangeDownloader.HttpException)
+        assertEquals(416, (failure.error as HttpRangeDownloader.HttpException).statusCode)
+    }
+
+    @Test
     fun testMidStreamSocketDropAndResume() {
         val totalSize = 20_000
         val fullPayload = ByteArray(totalSize) { (it % 64).toByte() }
@@ -251,7 +284,6 @@ class HttpRangeDownloaderTest {
             )
         )
 
-        // First attempt should fail due to unexpected EOF/socket drop
         assertTrue("First attempt should fail on socket drop", firstOutcome is HttpRangeDownloader.DownloadOutcome.Failure)
         val failure = firstOutcome as HttpRangeDownloader.DownloadOutcome.Failure
         assertTrue("Can resume should be true after partial stream", failure.canResume)
@@ -343,5 +375,249 @@ class HttpRangeDownloaderTest {
         assertTrue(secondOutcome is HttpRangeDownloader.DownloadOutcome.Success)
         assertEquals(totalSize.toLong(), destFile.length())
         assertArrayEquals(fullPayload, destFile.readBytes())
+    }
+
+    @Test
+    fun testAcceptEncodingIdentityHeaderSent() {
+        val payload = ByteArray(1_000) { 1 }
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", payload.size)
+                .setBody(Buffer().write(payload))
+        )
+
+        val destFile = File(tempFolder.root, "identity_header.bin")
+        downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-identity",
+                url = server.url("/test-identity").toString(),
+                destinationFile = destFile
+            )
+        )
+
+        val recorded = server.takeRequest()
+        assertEquals("identity", recorded.getHeader("Accept-Encoding"))
+    }
+
+    @Test
+    fun testWeakETagOmitsIfRangeAndEmitsDiagnostic() {
+        val totalSize = 6_000
+        val fullPayload = ByteArray(totalSize) { 7 }
+        val offset = 2_000
+
+        val destFile = File(tempFolder.root, "weak_etag.bin")
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+
+        partFile.writeBytes(fullPayload.copyOfRange(0, offset))
+        val sidecar = HttpRangeDownloader.MetaSidecar(
+            url = server.url("/weak-etag").toString(),
+            etag = "W/\"weak-etag-123\"",
+            totalBytes = totalSize.toLong()
+        )
+        metaFile.writeText(sidecar.toJson())
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .setHeader("Content-Range", "bytes $offset-${totalSize - 1}/$totalSize")
+                .setHeader("Content-Length", totalSize - offset)
+                .setBody(Buffer().write(fullPayload.copyOfRange(offset, totalSize)))
+        )
+
+        var diagnosticCode: String? = null
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-weak",
+                url = server.url("/weak-etag").toString(),
+                destinationFile = destFile
+            ),
+            onDiagnostic = { _, _, code, _ ->
+                if (code == "WEAK_ETAG_DETECTED") {
+                    diagnosticCode = code
+                }
+            }
+        )
+
+        assertTrue(outcome is HttpRangeDownloader.DownloadOutcome.Success)
+        val recorded = server.takeRequest()
+        assertEquals("bytes=2000-", recorded.getHeader("Range"))
+        assertNull("If-Range must NOT be sent for weak ETags", recorded.getHeader("If-Range"))
+        assertEquals("WEAK_ETAG_DETECTED", diagnosticCode)
+    }
+
+    @Test
+    fun testWeakETagChangedResetsDownloadFromZero() {
+        val totalSize = 6_000
+        val oldPayload = ByteArray(totalSize) { 7 }
+        val newPayload = ByteArray(totalSize) { 9 }
+        val offset = 2_000
+
+        val destFile = File(tempFolder.root, "weak_etag_changed.bin")
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+
+        partFile.writeBytes(oldPayload.copyOfRange(0, offset))
+        val sidecar = HttpRangeDownloader.MetaSidecar(
+            url = server.url("/weak-etag-changed").toString(),
+            etag = "W/\"weak-etag-v1\"",
+            totalBytes = totalSize.toLong()
+        )
+        metaFile.writeText(sidecar.toJson())
+
+        // First response: 206 with a DIFFERENT weak ETag (resource updated on server)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(206)
+                .setHeader("ETag", "W/\"weak-etag-v2\"")
+                .setHeader("Content-Range", "bytes $offset-${totalSize - 1}/$totalSize")
+                .setHeader("Content-Length", totalSize - offset)
+                .setBody(Buffer().write(newPayload.copyOfRange(offset, totalSize)))
+        )
+
+        // Second response: full 200 download from byte 0
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("ETag", "W/\"weak-etag-v2\"")
+                .setHeader("Content-Length", totalSize)
+                .setBody(Buffer().write(newPayload))
+        )
+
+        val diagnostics = mutableListOf<String>()
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-weak-changed",
+                url = server.url("/weak-etag-changed").toString(),
+                destinationFile = destFile
+            ),
+            onDiagnostic = { _, _, code, _ ->
+                if (code != null) diagnostics.add(code)
+            }
+        )
+
+        assertTrue(outcome is HttpRangeDownloader.DownloadOutcome.Success)
+        assertTrue(diagnostics.contains("RANGE_REPRESENTATION_CHANGED"))
+        assertArrayEquals("File content must match new representation without corruption", newPayload, destFile.readBytes())
+    }
+
+    @Test
+    fun testWorkerPreemptionPreservesPartialFile() {
+        val totalSize = 10_000
+        val payload = ByteArray(totalSize) { 3 }
+        val destFile = File(tempFolder.root, "preempted.bin")
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", totalSize)
+                .setBody(Buffer().write(payload))
+        )
+
+        val stopFlag = AtomicBoolean(false)
+        var preemptionReported = false
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-preempt",
+                url = server.url("/preempt").toString(),
+                destinationFile = destFile
+            ),
+            onProgress = {
+                if (it.bytesDownloaded >= 3_000) {
+                    stopFlag.set(true)
+                }
+            },
+            onDiagnostic = { _, _, code, _ ->
+                if (code == "WORKER_PREEMPTED") {
+                    preemptionReported = true
+                }
+            },
+            isStopped = { stopFlag.get() },
+            isCancelled = { false } // NOT user cancelled!
+        )
+
+        assertTrue("Outcome must be Paused on system preemption", outcome is HttpRangeDownloader.DownloadOutcome.Paused)
+        val paused = outcome as HttpRangeDownloader.DownloadOutcome.Paused
+        assertTrue(paused.isPreempted)
+        assertTrue(preemptionReported)
+
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+        assertTrue(".part file MUST be preserved on preemption", partFile.exists())
+        assertTrue("Meta sidecar MUST be preserved on preemption", metaFile.exists())
+        assertTrue("Preserved part file length must be > 0", partFile.length() > 0L)
+    }
+
+    @Test
+    fun testExplicitCancellationPurgesPartialFile() {
+        val totalSize = 10_000
+        val payload = ByteArray(totalSize) { 5 }
+        val destFile = File(tempFolder.root, "cancelled.bin")
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", totalSize)
+                .setBody(Buffer().write(payload))
+        )
+
+        val cancelFlag = AtomicBoolean(false)
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-cancel",
+                url = server.url("/cancel").toString(),
+                destinationFile = destFile
+            ),
+            onProgress = {
+                if (it.bytesDownloaded >= 2_000) {
+                    cancelFlag.set(true)
+                }
+            },
+            isCancelled = { cancelFlag.get() }
+        )
+
+        assertTrue(outcome is HttpRangeDownloader.DownloadOutcome.Cancelled)
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+        assertFalse(".part file must be purged on explicit cancellation", partFile.exists())
+        assertFalse("Sidecar metadata must be purged on explicit cancellation", metaFile.exists())
+    }
+
+    @Test
+    fun testZeroByteDownloadSuccess() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", 0)
+                .setHeader("Content-Type", "text/plain")
+                .setBody("")
+        )
+
+        val destFile = File(tempFolder.root, "empty.txt")
+        val snapshots = mutableListOf<HttpRangeDownloader.ProgressSnapshot>()
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-empty",
+                url = server.url("/empty.txt").toString(),
+                destinationFile = destFile
+            ),
+            onProgress = { snapshots.add(it) }
+        )
+
+        assertTrue("Outcome should be Success for zero-byte file", outcome is HttpRangeDownloader.DownloadOutcome.Success)
+        val success = outcome as HttpRangeDownloader.DownloadOutcome.Success
+        assertEquals(0L, success.size)
+        assertTrue("Destination file should exist", destFile.exists())
+        assertEquals(0L, destFile.length())
+
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+        assertFalse(".part file must be cleaned up on success", partFile.exists())
+        assertFalse("Sidecar metadata must be cleaned up on success", metaFile.exists())
     }
 }
