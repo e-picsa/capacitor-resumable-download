@@ -280,6 +280,19 @@ class HttpRangeDownloader(
                         var read: Int
 
                         while (inputStream.read(buffer).also { read = it } != -1) {
+                            if (isPaused()) {
+                                onProgress(
+                                    ProgressSnapshot(
+                                        downloadId = request.downloadId,
+                                        bytesDownloaded = currentBytes,
+                                        totalBytes = totalBytes,
+                                        progress = calculateProgress(currentBytes, totalBytes),
+                                        status = ProgressSnapshot.Status.PAUSED
+                                    )
+                                )
+                                return DownloadOutcome.Paused(request.downloadId, currentBytes, totalBytes)
+                            }
+
                             if (isCancelled()) {
                                 onProgress(
                                     ProgressSnapshot(
@@ -293,19 +306,6 @@ class HttpRangeDownloader(
                                 partFile.delete()
                                 metaFile.delete()
                                 return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
-                            }
-
-                            if (isPaused()) {
-                                onProgress(
-                                    ProgressSnapshot(
-                                        downloadId = request.downloadId,
-                                        bytesDownloaded = currentBytes,
-                                        totalBytes = totalBytes,
-                                        progress = calculateProgress(currentBytes, totalBytes),
-                                        status = ProgressSnapshot.Status.PAUSED
-                                    )
-                                )
-                                return DownloadOutcome.Paused(request.downloadId, currentBytes, totalBytes)
                             }
 
                             raf.write(buffer, 0, read)

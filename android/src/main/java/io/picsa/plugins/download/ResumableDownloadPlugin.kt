@@ -101,7 +101,13 @@ class ResumableDownloadPlugin : Plugin() {
         val channelName = notificationObj?.optString("channelName")
         val channelId = notificationObj?.optString("channelId")
 
-        val destFile = resolveDestinationFile(destRelativePath, directory)
+        val destFile: File
+        try {
+            destFile = resolveDestinationFile(destRelativePath, directory)
+        } catch (e: IllegalArgumentException) {
+            call.reject(e.message)
+            return
+        }
 
         val config = DownloadConfig(
             downloadId = downloadId,
@@ -129,7 +135,6 @@ class ResumableDownloadPlugin : Plugin() {
         }
 
         DownloadWorker.setPaused(downloadId, true)
-        WorkManager.getInstance(context).cancelUniqueWork("download_$downloadId")
         call.resolve()
     }
 
@@ -224,7 +229,13 @@ class ResumableDownloadPlugin : Plugin() {
             return
         }
         val directory = call.getString("directory") ?: "DATA"
-        val file = resolveDestinationFile(destRelativePath, directory)
+        val file: File
+        try {
+            file = resolveDestinationFile(destRelativePath, directory)
+        } catch (e: IllegalArgumentException) {
+            call.reject(e.message)
+            return
+        }
 
         val partFile = File(file.absolutePath + ".part")
         val metaFile = File(file.absolutePath + ".part.meta.json")
@@ -344,7 +355,11 @@ class ResumableDownloadPlugin : Plugin() {
         }
 
         val cleaned = relativePath.trimStart('/')
-        val file = File(baseDir, cleaned)
+        val canonicalBase = baseDir.canonicalFile
+        val file = File(canonicalBase, cleaned).canonicalFile
+        if (file != canonicalBase && !file.toPath().startsWith(canonicalBase.toPath())) {
+            throw IllegalArgumentException("Destination path must remain inside the selected directory.")
+        }
         val parent = file.parentFile
         if (parent != null && !parent.exists()) {
             parent.mkdirs()
