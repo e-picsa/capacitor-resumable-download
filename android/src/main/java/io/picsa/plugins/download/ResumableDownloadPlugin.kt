@@ -199,6 +199,8 @@ class ResumableDownloadPlugin : Plugin() {
             channelId = channelId
         )
 
+        DownloadWorker.clearPause(downloadId)
+        DownloadWorker.clearCancel(downloadId)
         saveConfig(config)
         enqueueWorker(config, call)
     }
@@ -319,17 +321,31 @@ class ResumableDownloadPlugin : Plugin() {
         val workerStatus = output.getString(DownloadWorker.KEY_OUTPUT_STATUS)
 
         val statusStr = when (info.state) {
-            WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING -> "downloading"
+            WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING -> {
+                if (DownloadWorker.isPaused(downloadId)) "paused" else "downloading"
+            }
             WorkInfo.State.SUCCEEDED -> workerStatus ?: "completed"
             WorkInfo.State.FAILED -> "error"
-            WorkInfo.State.CANCELLED -> "cancelled"
+            WorkInfo.State.CANCELLED -> {
+                if (DownloadWorker.isPaused(downloadId) || !DownloadWorker.isCancelled(downloadId)) {
+                    val destFile = loadConfig(downloadId)?.let { File(it.destinationPath) }
+                    val partFile = destFile?.let { File(it.absolutePath + ".part") }
+                    if (DownloadWorker.isPaused(downloadId) || (partFile != null && partFile.exists())) "paused" else "cancelled"
+                } else {
+                    "cancelled"
+                }
+            }
             WorkInfo.State.BLOCKED -> "downloading"
         }
+
+        val destFile = loadConfig(downloadId)?.let { File(it.destinationPath) }
+        val partFile = destFile?.let { File(it.absolutePath + ".part") }
+        val fallbackSize = if (partFile != null && partFile.exists()) partFile.length() else 0L
 
         val ret = JSObject().apply {
             put("downloadId", downloadId)
             put("status", statusStr)
-            put("bytesDownloaded", output.getLong(DownloadWorker.KEY_OUTPUT_SIZE, 0L))
+            put("bytesDownloaded", output.getLong(DownloadWorker.KEY_OUTPUT_SIZE, fallbackSize))
             put("totalBytes", -1)
             output.getString(DownloadWorker.KEY_OUTPUT_URI)?.let { put("uri", it) }
         }
@@ -458,10 +474,12 @@ class ResumableDownloadPlugin : Plugin() {
                                 call.resolve(ret)
                             }
                             WorkInfo.State.CANCELLED -> {
-                                if (DownloadWorker.isPaused(config.downloadId)) {
-                                    val destFile = File(config.destinationPath)
-                                    val partFile = File(destFile.absolutePath + ".part")
-                                    val size = if (partFile.exists()) partFile.length() else 0L
+                                val destFile = File(config.destinationPath)
+                                val partFile = File(destFile.absolutePath + ".part")
+                                val size = if (partFile.exists()) partFile.length() else 0L
+
+                                if (DownloadWorker.isPaused(config.downloadId) || !DownloadWorker.isCancelled(config.downloadId)) {
+                                    // Paused by user OR preempted by OS before starting/finishing
                                     val ret = JSObject().apply {
                                         put("downloadId", config.downloadId)
                                         put("status", "paused")

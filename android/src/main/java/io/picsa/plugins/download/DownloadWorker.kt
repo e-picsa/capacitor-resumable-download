@@ -162,6 +162,7 @@ class DownloadWorker(
                 setForeground(initialInfo)
                 foregroundPromoted = true
             }.onFailure { err ->
+                if (err is kotlinx.coroutines.CancellationException) throw err
                 foregroundPromoted = false
                 ResumableDownloadPlugin.emitDiagnostic(
                     downloadId = downloadId,
@@ -175,8 +176,6 @@ class DownloadWorker(
 
         val destinationFile = File(destPath)
         val downloader = HttpRangeDownloader()
-
-        clearPause(downloadId)
 
         val outcome = try {
             downloader.execute(
@@ -209,6 +208,10 @@ class DownloadWorker(
                 },
                 onCallCreated = { call ->
                     registerCall(downloadId, call)
+                    // Close the race window if pause/cancel/stop occurred before call registration
+                    if (isPaused(downloadId) || isCancelled(downloadId) || isStopped) {
+                        call.cancel()
+                    }
                 },
                 isCancelled = { isCancelled(downloadId) },
                 isPaused = { isPaused(downloadId) },
@@ -216,12 +219,12 @@ class DownloadWorker(
             )
         } finally {
             unregisterCall(downloadId)
-            clearPause(downloadId)
-            clearCancel(downloadId)
         }
 
         return when (outcome) {
             is HttpRangeDownloader.DownloadOutcome.Success -> {
+                clearPause(downloadId)
+                clearCancel(downloadId)
                 if (notificationEnabled && foregroundPromoted) {
                     showCompletionNotification(channelId, title, destinationFile.name)
                 }

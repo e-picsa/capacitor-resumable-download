@@ -203,6 +203,23 @@ class HttpRangeDownloader(
                 return DownloadOutcome.Cancelled(request.downloadId, partLength)
             }
             if (isPaused() || isStopped()) {
+                if (isStopped()) {
+                    onDiagnostic(
+                        "warn",
+                        "Download worker was stopped by system. Partial file preserved for resumption.",
+                        "WORKER_PREEMPTED",
+                        mapOf("bytesDownloaded" to partLength, "totalBytes" to (sidecar?.totalBytes ?: -1L))
+                    )
+                }
+                onProgress(
+                    ProgressSnapshot(
+                        downloadId = request.downloadId,
+                        bytesDownloaded = partLength,
+                        totalBytes = sidecar?.totalBytes ?: -1L,
+                        progress = calculateProgress(partLength, sidecar?.totalBytes ?: -1L),
+                        status = ProgressSnapshot.Status.PAUSED
+                    )
+                )
                 return DownloadOutcome.Paused(
                     request.downloadId,
                     partLength,
@@ -454,6 +471,23 @@ class HttpRangeDownloader(
                     return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
                 }
                 if (isPaused() || isStopped()) {
+                    if (isStopped()) {
+                        onDiagnostic(
+                            "warn",
+                            "Download worker was stopped by system. Partial file preserved for resumption.",
+                            "WORKER_PREEMPTED",
+                            mapOf("bytesDownloaded" to currentBytes, "totalBytes" to totalBytes)
+                        )
+                    }
+                    onProgress(
+                        ProgressSnapshot(
+                            downloadId = request.downloadId,
+                            bytesDownloaded = currentBytes,
+                            totalBytes = totalBytes,
+                            progress = calculateProgress(currentBytes, totalBytes),
+                            status = ProgressSnapshot.Status.PAUSED
+                        )
+                    )
                     return DownloadOutcome.Paused(
                         request.downloadId,
                         currentBytes,
@@ -461,6 +495,12 @@ class HttpRangeDownloader(
                         isPreempted = isStopped()
                     )
                 }
+                onDiagnostic(
+                    "warn",
+                    "Network stream interrupted at $currentBytes bytes (${ioe.message ?: ioe.javaClass.simpleName}). Partial file preserved for resumption.",
+                    "SOCKET_DROP_RESUMABLE",
+                    mapOf("bytesDownloaded" to currentBytes, "totalBytes" to totalBytes, "canResume" to (currentBytes > 0))
+                )
                 onProgress(
                     ProgressSnapshot(
                         downloadId = request.downloadId,
