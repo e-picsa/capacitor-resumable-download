@@ -10,9 +10,18 @@ on:
       - 'docs/**'
       - '.gitignore'
       - '.prettierignore'
+      - '.prettierrc'
       - '.editorconfig'
       - '.pr_agent.toml'
       - 'LICENSE'
+      - 'example-app/**'
+      - 'scripts/**'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/e2e-android.yml'
+      - '.github/workflows/pr-agent.yml'
+      - '.github/workflows/release-please.yml'
 
 permissions:
   contents: read

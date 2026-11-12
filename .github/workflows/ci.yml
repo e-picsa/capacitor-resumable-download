@@ -12,6 +12,10 @@ on:
       - '.editorconfig'
       - '.pr_agent.toml'
       - 'LICENSE'
+      - '.github/workflows/e2e-android.yml'
+      - '.github/workflows/pr-agent.yml'
+      - '.github/workflows/pr-preview.yml'
+      - '.github/workflows/release-please.yml'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -23,6 +27,10 @@ on:
       - '.editorconfig'
       - '.pr_agent.toml'
       - 'LICENSE'
+      - '.github/workflows/e2e-android.yml'
+      - '.github/workflows/pr-agent.yml'
+      - '.github/workflows/pr-preview.yml'
+      - '.github/workflows/release-please.yml'
 
 jobs:
   lint-and-build:
