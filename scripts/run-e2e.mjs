@@ -58,8 +58,8 @@ Options:
 }
 
 const SERVER_PORT = parseInt(getArg('--port', '8080'), 10);
-const FILE_SIZE_MB = parseInt(getArg('--size-mb', '5'), 10);
-const THROTTLE_KBPS = parseInt(getArg('--throttle', '300'), 10);
+const FILE_SIZE_MB = parseInt(getArg('--size-mb', '3'), 10);
+const THROTTLE_KBPS = parseInt(getArg('--throttle', '600'), 10);
 const SPECIFIED_SERIAL = getArg('--serial', null);
 const SKIP_BUILD = hasFlag('--skip-build');
 const SKIP_INSTALL = hasFlag('--skip-install');
@@ -545,15 +545,16 @@ async function main() {
       try {
         const downloadId = 'e2e-pause-test';
         const destPath = 'downloads/e2e-pause.bin';
+        const throttleUrl = `${baseUrl}?throttle_kbps=${THROTTLE_KBPS}`;
 
         // Clear event buffer so we only inspect resume events
         await client.evaluate('window.__clearE2EEvents()');
 
-        // Resume at full speed without throttle (non-blocking in CDP)
+        // Resume download (non-blocking in CDP)
         await client.evaluate(`
           window.__activePromise = window.ResumableDownload.resume({
             downloadId: '${downloadId}',
-            url: '${baseUrl}',
+            url: '${throttleUrl}',
             destinationPath: '${destPath}'
           }).catch(err => ({ error: err.message || String(err) }));
           undefined;
@@ -761,12 +762,12 @@ async function main() {
           );
         }
 
-        // Resume using normal (clean) URL
+        // Resume using same URL (server allows completion on Range request)
         await client.evaluate('window.__clearE2EEvents()');
         await client.evaluate(`
           window.__activePromise = window.ResumableDownload.resume({
             downloadId: '${downloadId}',
-            url: '${baseUrl}',
+            url: '${dropUrl}',
             destinationPath: '${destPath}'
           }).catch(err => ({ error: err.message || String(err) }));
           undefined;
@@ -781,7 +782,7 @@ async function main() {
             window.__e2eProgressEvents.filter(e => e.downloadId === '${downloadId}')
           `);
           for (const ev of events) {
-            if (ev.resumedFromBytes && ev.resumedFromBytes >= dropThresholdBytes) {
+            if (ev.resumedFromBytes && ev.resumedFromBytes >= minExpectedSavedBytes) {
               resumeOffset = ev.resumedFromBytes;
             }
             if (ev.status === 'completed') {

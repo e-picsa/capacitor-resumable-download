@@ -114,6 +114,8 @@ const server = http.createServer((req, res) => {
         : '0'),
     10,
   );
+  // By default, drops only occur on initial (non-Range) requests so resumes with the same URL can complete
+  const dropOnResume = url.searchParams.get('drop_on_resume') === 'true';
   const rangeHeader = req.headers.range;
   const ifRange = req.headers['if-range'];
 
@@ -186,7 +188,7 @@ const server = http.createServer((req, res) => {
           const ok = res.write(chunk);
           sentBytes += read;
 
-          if (dropAfterBytes > 0 && sentBytes >= dropAfterBytes) {
+          if (dropAfterBytes > 0 && (!isPartial || dropOnResume) && sentBytes >= dropAfterBytes) {
             console.log(
               `  [MockServer] Abruptly dropping connection after ${sentBytes} bytes (drop_after_bytes=${dropAfterBytes})`,
             );
