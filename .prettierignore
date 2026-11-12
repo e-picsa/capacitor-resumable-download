@@ -6,3 +6,4 @@ example-app/android/.gradle/
 android/build/
 android/.gradle/
 node_modules/
+AGENTS.md
