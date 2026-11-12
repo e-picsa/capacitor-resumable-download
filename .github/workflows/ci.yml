@@ -3,8 +3,26 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.agents/**'
+      - 'docs/**'
+      - '.gitignore'
+      - '.prettierignore'
+      - '.editorconfig'
+      - '.pr_agent.toml'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.agents/**'
+      - 'docs/**'
+      - '.gitignore'
+      - '.prettierignore'
+      - '.editorconfig'
+      - '.pr_agent.toml'
+      - 'LICENSE'
 
 jobs:
   lint-and-build:
