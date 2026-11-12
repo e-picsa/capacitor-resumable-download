@@ -2,6 +2,8 @@
 
 This guide gives AI agents (and humans) deterministic tooling to interact with the
 example app on the `Medium_Phone` emulator and capture logs without manual tapping.
+For pre-Android-8 emulators, see [Android 7 (API 24) testing](#6-android-7-api-24-testing) —
+the stock System WebView there is too old to run the demo bundle.
 
 ## 1. Prerequisites
 
@@ -99,11 +101,12 @@ Key tags/codes:
 
 ## 4. Known failure signatures
 
-| Symptom                     | Log signature                                                                 | Cause / fix                                                                                                   |
-| --------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Instant ERROR, 0 bytes      | `WM-WorkerWrapper ... IllegalArgumentException ... createNotificationChannel` | Blank `channelId` from `JSONObject.optString` → fixed by `getString+ifBlank` + worker default + `runCatching` |
-| Instant ERROR, HTTP 403     | `HttpException: HTTP 403` / `Download failed`                                 | Dead demo URL (`commondatastorage...BigBuckBunny.mp4` now 403) → use `proof.ovh.net` presets or local server  |
-| Completes too fast to pause | progress jumps 0→100 in <1s                                                   | File too small/fast → use 100MB preset or `?throttle_kbps=200` local server                                   |
+| Symptom                          | Log signature                                                                 | Cause / fix                                                                                                   |
+| -------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Instant ERROR, 0 bytes           | `WM-WorkerWrapper ... IllegalArgumentException ... createNotificationChannel` | Blank `channelId` from `JSONObject.optString` → fixed by `getString+ifBlank` + worker default + `runCatching` |
+| Instant ERROR, HTTP 403          | `HttpException: HTTP 403` / `Download failed`                                 | Dead demo URL (`commondatastorage...BigBuckBunny.mp4` now 403) → use `proof.ovh.net` presets or local server  |
+| Completes too fast to pause      | progress jumps 0→100 in <1s                                                   | File too small/fast → use 100MB preset or `?throttle_kbps=200` local server                                   |
+| Instant ERROR, 0 bytes on API 24 | `CertPathValidatorException: Trust anchor…` / `SSLHandshakeException`         | ISRG Root X1/X2 missing from 7.0 system store → use local HTTP server on API 24 (see §6c)                     |
 
 ## 5. Screenshot
 
@@ -111,3 +114,92 @@ Key tags/codes:
 # Prefer device_screenshot tool for viewing; agent-device screenshot for files:
 $AGENT screenshot /tmp/demo.png
 ```
+
+## 6. Android 7 (API 24) testing
+
+Support statement: keep API 24 as the **build** floor (it's already there and
+costs nothing), but treat **7.1 as the minimum test target for remote-HTTPS
+scenarios**, and accept local-server-only testing on 7.0. Rationale: 7.0's
+system trust store lacks the ISRG roots (§6c) — an unfixable platform gap that
+7.1 closes — while Capacitor 9 will lift the floor to API 26 (Android 8)
+anyway. Don't invest in 7.0-specific workarounds (custom trust anchors, legacy
+JS bundles); if `older_device` is ever recreated, prefer a 7.1 image so it
+represents the actual minimum supported config instead of the degraded corner.
+
+The native plugin is API-24-safe by design (foreground-service branching,
+NIO reflection fallback, `canonicalPath` checks), and `older_device` exists to
+prove it. But stock API 24 emulator images ship System WebView **Chrome 53**
+(2016), which predates `<script type="module">` (Chrome 61) — so the demo bundle
+never executes: taps do nothing and logcat shows
+`Uncaught SyntaxError: Unexpected token (` with zero `Plugin listeners ready`.
+That is a fossil-WebView artifact, not a plugin bug (real devices update WebView
+via the Play Store), so the fix is upgrading the WebView, not a legacy JS build.
+
+The same procedure applies to any pre-Chrome-61 emulator image.
+
+### 6a. Download + sideload Chrome 119 (last major supporting API 24)
+
+```bash
+# ~244MB, minAPI24 arm64 build, hosted on Cloudflare R2 (verified 200 OK,
+# application/vnd.android.package-archive, strong ETag, installs cleanly)
+curl -o /tmp/chrome119.apk https://pub-d7c30ed48e6840d684930ff830ba2819.r2.dev/chrome119.arm64.apk
+
+# Sideload to the old emulator (serials can reshuffle across reboots —
+# confirm with `adb devices` / device_list first, don't hardcode)
+adb -s <older_device_serial> install -r /tmp/chrome119.apk   # expect: Success
+
+# Switch the WebView implementation from stock to Chrome
+adb -s <older_device_serial> shell cmd webviewupdate set-webview-implementation com.android.chrome
+adb -s <older_device_serial> shell dumpsys package com.android.chrome | grep versionName
+# expect: versionName=119.0.6045.194
+```
+
+No demo rebuild or reinstall needed afterwards — relaunch the app and confirm
+`Plugin listeners ready.` in logcat with no `SyntaxError`.
+
+### 6c. TLS on 7.0: use the local server, not HTTPS presets
+
+Android 7.0's system trust store predates Let's Encrypt's ISRG roots, so **all
+modern-CA HTTPS fails on API 24** with:
+
+```text
+java.security.cert.CertPathValidatorException: Trust anchor for certification path not found.
+→ exceptionClass=SSLHandshakeException, canResume=false, 0 bytes
+```
+
+Verified 2026-11-11 on `older_device`: both `proof.ovh.net` (chain ends at
+ISRG Root X1) and the R2 bucket `*.r2.dev` (via ISRG Root X2, cross-signed by
+X1) fail identically at the handshake. ISRG Root X1 only entered the system
+store in **7.1**, so this affects 7.0 specifically — your memory was right.
+
+Two consequences:
+
+- The Chrome 119 upgrade does **not** fix native downloads: OkHttp uses the
+  platform trust store, not Chrome's. The WebView upgrade only fixes the demo
+  web UI.
+- The R2 bucket does **not** help on 7.0 either. For API 24 testing, use the
+  local cleartext server (`http://10.0.2.2:8080/...`, already allow-listed in
+  `network_security_config.xml`) — verified working (5MB completed, plus the
+  pause/resume/cancel cycle in §6b). The user's local failure was just the
+  stopped server, not a device issue.
+
+Rule of thumb: API 24 → local HTTP server only; API 25+ / modern devices →
+remote HTTPS presets are fine.
+
+### 6b. Run the download test
+
+Same flow as §2 (use the throttled local server for a pausable window).
+Verified on `older_device` 2026-11-11: 5MB completed; 20MB @50KB/s paused at
+2.4MB → resumed with `resumedFromBytes=2523136` → cancelled (`.part` purged,
+row → CANCELLED) → restarted @2000KB/s to full completion with target file
+present (20MB) and no `.part`/sidecar leftovers.
+
+Agent notes specific to the old WebView / snapshot helper:
+
+- Refs renumber between snapshots and taps can silently miss — re-snapshot
+  immediately before each `fill`/`press`, and confirm the effect in logcat.
+- The readonly Task ID display only refreshes on `input`+`change` events;
+  the Start handler always derives fresh from the destination field regardless.
+- On API 24 there is no notification-permission dialog (`POST_NOTIFICATIONS`
+  doesn't exist pre-33; the plugin reports granted), so Start proceeds directly.
+- Delete `chrome119.apk` / `/tmp` copies afterwards — never commit the binary.
