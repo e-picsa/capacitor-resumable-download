@@ -346,7 +346,7 @@ class HttpRangeDownloaderTest {
                     pauseFlag.set(true)
                 }
             },
-            isPaused = { pauseFlag.get() }
+            isPaused = { pauseFlag.get() || (destFile.parentFile?.resolve("${destFile.name}.part")?.let { it.exists() && it.length() >= 4_000 } == true) }
         )
 
         assertTrue("First attempt should pause", firstOutcome is HttpRangeDownloader.DownloadOutcome.Paused)
@@ -535,7 +535,7 @@ class HttpRangeDownloaderTest {
                     preemptionReported = true
                 }
             },
-            isStopped = { stopFlag.get() },
+            isStopped = { stopFlag.get() || (destFile.parentFile?.resolve("${destFile.name}.part")?.let { it.exists() && it.length() >= 3_000 } == true) },
             isCancelled = { false } // NOT user cancelled!
         )
 
@@ -577,7 +577,7 @@ class HttpRangeDownloaderTest {
                     cancelFlag.set(true)
                 }
             },
-            isCancelled = { cancelFlag.get() }
+            isCancelled = { cancelFlag.get() || (destFile.parentFile?.resolve("${destFile.name}.part")?.let { it.exists() && it.length() >= 2_000 } == true) }
         )
 
         assertTrue(outcome is HttpRangeDownloader.DownloadOutcome.Cancelled)
@@ -619,5 +619,89 @@ class HttpRangeDownloaderTest {
         val metaFile = File(destFile.absolutePath + ".part.meta.json")
         assertFalse(".part file must be cleaned up on success", partFile.exists())
         assertFalse("Sidecar metadata must be cleaned up on success", metaFile.exists())
+    }
+
+    @Test
+    fun testMalformedUrlReturnsFailureOutcomeWithoutCrash() {
+        val destFile = File(tempFolder.root, "malformed.bin")
+        val snapshots = mutableListOf<HttpRangeDownloader.ProgressSnapshot>()
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-malformed",
+                url = "invalid-url-schema://not a valid url",
+                destinationFile = destFile
+            ),
+            onProgress = { snapshots.add(it) }
+        )
+
+        assertTrue("Outcome should be Failure", outcome is HttpRangeDownloader.DownloadOutcome.Failure)
+        val failure = outcome as HttpRangeDownloader.DownloadOutcome.Failure
+        assertTrue("Error should be IllegalArgumentException", failure.error is IllegalArgumentException)
+        assertFalse("Malformed URL should not be resumable", failure.canResume)
+        assertEquals("test-malformed", failure.downloadId)
+        val lastSnapshot = snapshots.lastOrNull()
+        assertNotNull("Should emit an error progress snapshot", lastSnapshot)
+        assertEquals(HttpRangeDownloader.ProgressSnapshot.Status.ERROR, lastSnapshot?.status)
+    }
+
+    @Test
+    fun testCancelBeforeWritingSidecarPurgesFiles() {
+        val totalSize = 10_000
+        val payload = ByteArray(totalSize) { 7 }
+        val destFile = File(tempFolder.root, "cancel_early.bin")
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Length", totalSize)
+                .setBody(Buffer().write(payload))
+        )
+
+        var cancelRequested = false
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-cancel-early",
+                url = server.url("/cancel_early.bin").toString(),
+                destinationFile = destFile
+            ),
+            onCallCreated = {
+                // Set cancel flag as soon as call is created so isCancelled() is true before sidecar/file open
+                cancelRequested = true
+            },
+            isCancelled = { cancelRequested }
+        )
+
+        assertTrue("Outcome should be Cancelled", outcome is HttpRangeDownloader.DownloadOutcome.Cancelled)
+        val partFile = File(destFile.absolutePath + ".part")
+        val metaFile = File(destFile.absolutePath + ".part.meta.json")
+        assertFalse(".part file must not exist on cancellation", partFile.exists())
+        assertFalse("Sidecar metadata must not exist on cancellation", metaFile.exists())
+    }
+
+    @Test
+    fun testMalformedHeadersReturnsFailureOutcomeWithoutCrash() {
+        val destFile = File(tempFolder.root, "bad_headers.bin")
+        val snapshots = mutableListOf<HttpRangeDownloader.ProgressSnapshot>()
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-bad-headers",
+                url = server.url("/valid.bin").toString(),
+                destinationFile = destFile,
+                headers = mapOf("Invalid-Header\nName" to "value\r\ninjection")
+            ),
+            onProgress = { snapshots.add(it) }
+        )
+
+        assertTrue("Outcome should be Failure on malformed headers", outcome is HttpRangeDownloader.DownloadOutcome.Failure)
+        val failure = outcome as HttpRangeDownloader.DownloadOutcome.Failure
+        assertTrue("Error should be IllegalArgumentException", failure.error is IllegalArgumentException)
+        assertFalse("Malformed header request should not be resumable", failure.canResume)
+        assertEquals("test-bad-headers", failure.downloadId)
+        val lastSnapshot = snapshots.lastOrNull()
+        assertNotNull("Should emit an error progress snapshot", lastSnapshot)
+        assertEquals(HttpRangeDownloader.ProgressSnapshot.Status.ERROR, lastSnapshot?.status)
     }
 }

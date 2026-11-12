@@ -2,6 +2,7 @@ package io.picsa.plugins.download
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -118,7 +119,7 @@ class DownloadWorker(
         val rawChannelName = inputData.getString(KEY_CHANNEL_NAME)
         val channelName = if (rawChannelName.isNullOrBlank()) DEFAULT_CHANNEL_NAME else rawChannelName
 
-        notificationId = kotlin.math.abs(downloadId.hashCode())
+        notificationId = (downloadId.hashCode() and 0x7fffffff).coerceAtLeast(1)
 
         val headers = mutableMapOf<String, String>()
         if (!headersJson.isNullOrBlank()) {
@@ -190,6 +191,8 @@ class DownloadWorker(
         val destinationFile = File(destPath)
         val downloader = HttpRangeDownloader()
 
+        var lastNotificationMs = 0L
+
         val outcome = try {
             downloader.execute(
                 request = HttpRangeDownloader.DownloadRequest(
@@ -202,17 +205,34 @@ class DownloadWorker(
                     ResumableDownloadPlugin.emitProgress(snapshot)
 
                     if (notificationEnabled && foregroundPromoted && snapshot.status == HttpRangeDownloader.ProgressSnapshot.Status.DOWNLOADING) {
-                        runCatching {
-                            val progressText = formatProgressText(snapshot.bytesDownloaded, snapshot.totalBytes)
-                            val builder = NotificationCompat.Builder(context, channelId)
-                                .setContentTitle(title)
-                                .setContentText(subtitle ?: progressText)
-                                .setSmallIcon(android.R.drawable.stat_sys_download)
-                                .setOngoing(true)
-                                .setOnlyAlertOnce(true)
-                                .setProgress(100, snapshot.progress, snapshot.totalBytes <= 0)
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotificationMs >= 1000L) {
+                            lastNotificationMs = now
+                            runCatching {
+                                val progressText = formatProgressText(snapshot.bytesDownloaded, snapshot.totalBytes)
+                                val builder = NotificationCompat.Builder(context, channelId)
+                                    .setContentTitle(title)
+                                    .setContentText(subtitle ?: progressText)
+                                    .setSmallIcon(android.R.drawable.stat_sys_download)
+                                    .setOngoing(true)
+                                    .setOnlyAlertOnce(true)
+                                    .setProgress(100, snapshot.progress, snapshot.totalBytes <= 0)
 
-                            notificationManager.notify(notificationId, builder.build())
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                                val pendingIntent = if (launchIntent != null) {
+                                    PendingIntent.getActivity(
+                                        context,
+                                        notificationId,
+                                        launchIntent,
+                                        PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+                                    )
+                                } else null
+                                if (pendingIntent != null) {
+                                    builder.setContentIntent(pendingIntent)
+                                }
+
+                                notificationManager.notify(notificationId, builder.build())
+                            }
                         }
                     }
                 },
@@ -317,6 +337,19 @@ class DownloadWorker(
             .setOnlyAlertOnce(true)
             .setProgress(100, progress, indeterminate)
 
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val pendingIntent = if (launchIntent != null) {
+            PendingIntent.getActivity(
+                context,
+                notificationId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            )
+        } else null
+        if (pendingIntent != null) {
+            builder.setContentIntent(pendingIntent)
+        }
+
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ForegroundInfo(
                 notificationId,
@@ -329,13 +362,27 @@ class DownloadWorker(
     }
 
     private fun showCompletionNotification(channelId: String, title: String, filename: String) {
+        val completionNotificationId = ((notificationId + 1) and 0x7fffffff).coerceAtLeast(1)
         val builder = NotificationCompat.Builder(context, channelId)
             .setContentTitle("Download Complete")
             .setContentText(filename)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setAutoCancel(true)
 
-        notificationManager.notify(notificationId, builder.build())
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val pendingIntent = if (launchIntent != null) {
+            PendingIntent.getActivity(
+                context,
+                completionNotificationId,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            )
+        } else null
+        if (pendingIntent != null) {
+            builder.setContentIntent(pendingIntent)
+        }
+
+        notificationManager.notify(completionNotificationId, builder.build())
     }
 
     private fun createNotificationChannel(channelId: String, channelName: String) {

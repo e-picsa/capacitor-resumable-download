@@ -160,37 +160,62 @@ class HttpRangeDownloader(
 
         val initialOffset = partLength
         var resumed = false
+        val httpRequest = try {
+            val httpRequestBuilder = Request.Builder().url(request.url)
 
-        val httpRequestBuilder = Request.Builder().url(request.url)
+            // Always request identity encoding unless caller explicitly specifies otherwise,
+            // preventing transparent gzip from corrupting byte-range slicing.
+            if (!request.headers.keys.any { it.equals("Accept-Encoding", ignoreCase = true) }) {
+                httpRequestBuilder.addHeader("Accept-Encoding", "identity")
+            }
 
-        // Always request identity encoding unless caller explicitly specifies otherwise,
-        // preventing transparent gzip from corrupting byte-range slicing.
-        if (!request.headers.keys.any { it.equals("Accept-Encoding", ignoreCase = true) }) {
-            httpRequestBuilder.addHeader("Accept-Encoding", "identity")
-        }
+            for ((k, v) in request.headers) {
+                httpRequestBuilder.addHeader(k, v)
+            }
 
-        for ((k, v) in request.headers) {
-            httpRequestBuilder.addHeader(k, v)
-        }
-
-        if (partLength > 0L) {
-            httpRequestBuilder.addHeader("Range", "bytes=$partLength-")
-            val storedEtag = sidecar?.etag
-            if (!storedEtag.isNullOrBlank()) {
-                if (storedEtag.startsWith("W/")) {
-                    onDiagnostic(
-                        "warn",
-                        "Stored ETag is weak ($storedEtag). Omitting If-Range header per RFC 9110 byte-range specification.",
-                        "WEAK_ETAG_DETECTED",
-                        mapOf("etag" to storedEtag)
-                    )
-                } else {
-                    httpRequestBuilder.addHeader("If-Range", storedEtag)
+            if (partLength > 0L) {
+                httpRequestBuilder.addHeader("Range", "bytes=$partLength-")
+                val storedEtag = sidecar?.etag
+                if (!storedEtag.isNullOrBlank()) {
+                    if (storedEtag.startsWith("W/")) {
+                        onDiagnostic(
+                            "warn",
+                            "Stored ETag is weak ($storedEtag). Omitting If-Range header per RFC 9110 byte-range specification.",
+                            "WEAK_ETAG_DETECTED",
+                            mapOf("etag" to storedEtag)
+                        )
+                    } else {
+                        httpRequestBuilder.addHeader("If-Range", storedEtag)
+                    }
                 }
             }
+
+            httpRequestBuilder.build()
+        } catch (e: IllegalArgumentException) {
+            onDiagnostic(
+                "error",
+                "Malformed request URL or headers (${request.url}): ${e.message}",
+                "MALFORMED_REQUEST",
+                mapOf("url" to request.url)
+            )
+            onProgress(
+                ProgressSnapshot(
+                    downloadId = request.downloadId,
+                    bytesDownloaded = partLength,
+                    totalBytes = sidecar?.totalBytes ?: -1L,
+                    progress = calculateProgress(partLength, sidecar?.totalBytes ?: -1L),
+                    status = ProgressSnapshot.Status.ERROR
+                )
+            )
+            return DownloadOutcome.Failure(
+                downloadId = request.downloadId,
+                error = e,
+                bytesDownloaded = partLength,
+                canResume = false
+            )
         }
 
-        val call = client.newCall(httpRequestBuilder.build())
+        val call = client.newCall(httpRequest)
         onCallCreated(call)
 
         val response: Response
@@ -380,6 +405,14 @@ class HttpRangeDownloader(
                 writeMode = "rw"
             }
 
+            var currentBytes = partLength
+
+            if (isCancelled()) {
+                partFile.delete()
+                metaFile.delete()
+                return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
+            }
+
             // Persist updated sidecar
             val newSidecar = MetaSidecar(
                 url = request.url,
@@ -395,9 +428,13 @@ class HttpRangeDownloader(
                 canResume = false
             )
 
-            var currentBytes = partLength
+            if (isCancelled()) {
+                partFile.delete()
+                metaFile.delete()
+                return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
+            }
+
             var lastEmitTimeMs = System.currentTimeMillis()
-            var lastEmitPercent = calculateProgress(currentBytes, totalBytes)
             var bytesSinceLastEmit = 0L
 
             try {
@@ -478,8 +515,8 @@ class HttpRangeDownloader(
                             val elapsed = now - lastEmitTimeMs
                             val currentPercent = calculateProgress(currentBytes, totalBytes)
 
-                            // Throttle progress events: max 1 event per 250ms OR >= 1% change
-                            if (elapsed >= 250 || kotlin.math.abs(currentPercent - lastEmitPercent) >= 1) {
+                            // Throttle progress events: strictly time-based (max 1 event per 250ms) during active streaming
+                            if (elapsed >= 250) {
                                 val throughput = if (elapsed > 0) (bytesSinceLastEmit * 1000) / elapsed else 0L
                                 onProgress(
                                     ProgressSnapshot(
@@ -493,7 +530,6 @@ class HttpRangeDownloader(
                                     )
                                 )
                                 lastEmitTimeMs = now
-                                lastEmitPercent = currentPercent
                                 bytesSinceLastEmit = 0L
                             }
                         }

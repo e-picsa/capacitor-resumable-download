@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
+import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
 import androidx.work.*
 import com.getcapacitor.*
@@ -12,6 +13,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import org.json.JSONObject
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -141,6 +143,7 @@ class ResumableDownloadPlugin : Plugin() {
     }
 
     private val savedOptions = ConcurrentHashMap<String, DownloadConfig>()
+    private val activeObservers = ConcurrentHashMap<UUID, Pair<LiveData<WorkInfo?>, Observer<WorkInfo?>>>()
     private val prefs: SharedPreferences by lazy {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -151,6 +154,14 @@ class ResumableDownloadPlugin : Plugin() {
     }
 
     override fun handleOnDestroy() {
+        // Remove active WorkInfo observers on main thread to avoid pinning Activity/WebView in RAM
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            for ((_, pair) in activeObservers) {
+                pair.first.removeObserver(pair.second)
+            }
+            activeObservers.clear()
+        }
+
         if (instance == this) {
             instance = null
         }
@@ -405,7 +416,7 @@ class ResumableDownloadPlugin : Plugin() {
     override fun checkPermissions(call: PluginCall) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val ret = JSObject()
-            ret.put("display", "granted")
+            ret.put("notifications", "granted")
             call.resolve(ret)
             return
         }
@@ -416,7 +427,7 @@ class ResumableDownloadPlugin : Plugin() {
     override fun requestPermissions(call: PluginCall) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val ret = JSObject()
-            ret.put("display", "granted")
+            ret.put("notifications", "granted")
             call.resolve(ret)
             return
         }
@@ -456,6 +467,7 @@ class ResumableDownloadPlugin : Plugin() {
                 override fun onChanged(value: WorkInfo?) {
                     if (value == null) return
                     if (value.state.isFinished) {
+                        activeObservers.remove(workRequest.id)
                         liveData.removeObserver(this)
                         val output = value.outputData
                         when (value.state) {
@@ -521,6 +533,7 @@ class ResumableDownloadPlugin : Plugin() {
                     }
                 }
             }
+            activeObservers[workRequest.id] = Pair(liveData, observer)
             liveData.observeForever(observer)
         }
     }
