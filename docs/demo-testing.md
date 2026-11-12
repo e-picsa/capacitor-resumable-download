@@ -2,6 +2,7 @@
 
 This guide gives AI agents (and humans) deterministic tooling to interact with the
 example app on the `Medium_Phone` emulator and capture logs without manual tapping.
+For fully automated headless and programmatic testing, see the [Automated Android E2E Testing Guide](e2e-testing.md) (`yarn test:e2e`).
 For pre-Android-8 emulators, see [Android 7 (API 24) testing](#6-android-7-api-24-testing) —
 the stock System WebView there is too old to run the demo bundle.
 

@@ -189,6 +189,15 @@ See [docs/cloudflare-cdn-setup.md](docs/cloudflare-cdn-setup.md) for full Cloudf
 
 ---
 
+## Testing & CI
+
+- **JVM Unit Tests** (`yarn test`): Runs pure Kotlin unit tests with OkHttp `MockWebServer` (< 1 second).
+- **Automated Android E2E Tests** (`yarn test:e2e`): Programmatic test harness against an Android emulator via Chrome DevTools Protocol (CDP) asserting start/pause/resume, `.part` storage state via `getFileStatus()`, cancellation purging, and network drop recovery.
+- **GitHub Actions CI** (`.github/workflows/e2e-android.yml`): Automates API 34 emulator testing in GitHub Actions with KVM acceleration.
+- For complete details, see [`docs/e2e-testing.md`](docs/e2e-testing.md) and [`docs/demo-testing.md`](docs/demo-testing.md).
+
+---
+
 ## License
 
 GPL-3.0

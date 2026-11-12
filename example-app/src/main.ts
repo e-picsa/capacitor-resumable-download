@@ -40,6 +40,30 @@ const busy = new Set<string>();
 
 const logHistory: string[] = [];
 
+// Expose on window for automated E2E testing and console inspection
+declare global {
+  interface Window {
+    ResumableDownload: typeof ResumableDownload;
+    Filesystem: typeof Filesystem;
+    Directory: typeof Directory;
+    __tasks: Map<string, TaskState>;
+    __e2eProgressEvents: DownloadProgressEvent[];
+    __e2eDiagnosticEvents: DownloadDiagnosticEvent[];
+    __clearE2EEvents: () => void;
+  }
+}
+
+window.ResumableDownload = ResumableDownload;
+window.Filesystem = Filesystem;
+window.Directory = Directory;
+window.__tasks = tasks;
+window.__e2eProgressEvents = [];
+window.__e2eDiagnosticEvents = [];
+window.__clearE2EEvents = () => {
+  window.__e2eProgressEvents = [];
+  window.__e2eDiagnosticEvents = [];
+};
+
 function log(message: string, level: 'info' | 'warn' | 'error' | 'success' = 'info') {
   const time = new Date().toLocaleTimeString();
   const entryText = `[${time}] ${message}`;
@@ -248,6 +272,7 @@ function patchRow(task: TaskState) {
 // Attach listeners
 async function setupPluginListeners() {
   await ResumableDownload.addListener('downloadProgress', (event: DownloadProgressEvent) => {
+    window.__e2eProgressEvents.push(event);
     let task = tasks.get(event.downloadId);
     if (!task) {
       task = {
@@ -274,6 +299,7 @@ async function setupPluginListeners() {
   });
 
   await ResumableDownload.addListener('downloadDiagnostic', (diag: DownloadDiagnosticEvent) => {
+    window.__e2eDiagnosticEvents.push(diag);
     const codeTag = diag.code ? `[${diag.code}] ` : '';
     log(
       `[${diag.downloadId}] [${diag.level.toUpperCase()}] ${codeTag}${diag.message}`,

@@ -83,7 +83,15 @@ yarn demo:install  # adb install -r <apk> (add `-s <serial>` for a specific devi
 > the copy; `demo:build` fails fast via `--check` if it is stale. Documenting alone
 > is not sufficient because the failure mode is silent (new JS, old Kotlin).
 
-See [docs/demo-testing.md](docs/demo-testing.md) for agent-driven emulator workflow
+### Automated Android E2E Tests
+
+```bash
+yarn test:e2e        # Run automated E2E tests against connected Android emulator
+node scripts/run-e2e.mjs --skip-build   # Fast local iteration against running app
+```
+
+See [docs/e2e-testing.md](docs/e2e-testing.md) for the automated Chrome DevTools Protocol (CDP) test harness.
+See [docs/demo-testing.md](docs/demo-testing.md) for agent-driven manual emulator workflow
 (snapshot/press/fill via `agent-device`, logcat tags, and pause/resume presets).
 See [docs/known-issues-and-caveats.md](docs/known-issues-and-caveats.md) for Android version quirks (TLS on API 24, FGS limits, OEM battery killers).
 See [ROADMAP.md](ROADMAP.md) for Capacitor 8/9 branching strategy, E2E CI plan, and code audit tracking.
