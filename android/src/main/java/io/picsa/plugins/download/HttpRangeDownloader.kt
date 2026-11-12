@@ -160,13 +160,42 @@ class HttpRangeDownloader(
 
         val initialOffset = partLength
         var resumed = false
-        val httpRequestBuilder = try {
-            Request.Builder().url(request.url)
+        val httpRequest = try {
+            val httpRequestBuilder = Request.Builder().url(request.url)
+
+            // Always request identity encoding unless caller explicitly specifies otherwise,
+            // preventing transparent gzip from corrupting byte-range slicing.
+            if (!request.headers.keys.any { it.equals("Accept-Encoding", ignoreCase = true) }) {
+                httpRequestBuilder.addHeader("Accept-Encoding", "identity")
+            }
+
+            for ((k, v) in request.headers) {
+                httpRequestBuilder.addHeader(k, v)
+            }
+
+            if (partLength > 0L) {
+                httpRequestBuilder.addHeader("Range", "bytes=$partLength-")
+                val storedEtag = sidecar?.etag
+                if (!storedEtag.isNullOrBlank()) {
+                    if (storedEtag.startsWith("W/")) {
+                        onDiagnostic(
+                            "warn",
+                            "Stored ETag is weak ($storedEtag). Omitting If-Range header per RFC 9110 byte-range specification.",
+                            "WEAK_ETAG_DETECTED",
+                            mapOf("etag" to storedEtag)
+                        )
+                    } else {
+                        httpRequestBuilder.addHeader("If-Range", storedEtag)
+                    }
+                }
+            }
+
+            httpRequestBuilder.build()
         } catch (e: IllegalArgumentException) {
             onDiagnostic(
                 "error",
-                "Malformed URL (${request.url}): ${e.message}",
-                "MALFORMED_URL",
+                "Malformed request URL or headers (${request.url}): ${e.message}",
+                "MALFORMED_REQUEST",
                 mapOf("url" to request.url)
             )
             onProgress(
@@ -186,34 +215,7 @@ class HttpRangeDownloader(
             )
         }
 
-        // Always request identity encoding unless caller explicitly specifies otherwise,
-        // preventing transparent gzip from corrupting byte-range slicing.
-        if (!request.headers.keys.any { it.equals("Accept-Encoding", ignoreCase = true) }) {
-            httpRequestBuilder.addHeader("Accept-Encoding", "identity")
-        }
-
-        for ((k, v) in request.headers) {
-            httpRequestBuilder.addHeader(k, v)
-        }
-
-        if (partLength > 0L) {
-            httpRequestBuilder.addHeader("Range", "bytes=$partLength-")
-            val storedEtag = sidecar?.etag
-            if (!storedEtag.isNullOrBlank()) {
-                if (storedEtag.startsWith("W/")) {
-                    onDiagnostic(
-                        "warn",
-                        "Stored ETag is weak ($storedEtag). Omitting If-Range header per RFC 9110 byte-range specification.",
-                        "WEAK_ETAG_DETECTED",
-                        mapOf("etag" to storedEtag)
-                    )
-                } else {
-                    httpRequestBuilder.addHeader("If-Range", storedEtag)
-                }
-            }
-        }
-
-        val call = client.newCall(httpRequestBuilder.build())
+        val call = client.newCall(httpRequest)
         onCallCreated(call)
 
         val response: Response
@@ -433,7 +435,6 @@ class HttpRangeDownloader(
             }
 
             var lastEmitTimeMs = System.currentTimeMillis()
-            var lastEmitPercent = calculateProgress(currentBytes, totalBytes)
             var bytesSinceLastEmit = 0L
 
             try {
@@ -529,7 +530,6 @@ class HttpRangeDownloader(
                                     )
                                 )
                                 lastEmitTimeMs = now
-                                lastEmitPercent = currentPercent
                                 bytesSinceLastEmit = 0L
                             }
                         }

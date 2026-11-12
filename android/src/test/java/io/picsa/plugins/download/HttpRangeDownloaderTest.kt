@@ -679,4 +679,29 @@ class HttpRangeDownloaderTest {
         assertFalse(".part file must not exist on cancellation", partFile.exists())
         assertFalse("Sidecar metadata must not exist on cancellation", metaFile.exists())
     }
+
+    @Test
+    fun testMalformedHeadersReturnsFailureOutcomeWithoutCrash() {
+        val destFile = File(tempFolder.root, "bad_headers.bin")
+        val snapshots = mutableListOf<HttpRangeDownloader.ProgressSnapshot>()
+
+        val outcome = downloader.execute(
+            request = HttpRangeDownloader.DownloadRequest(
+                downloadId = "test-bad-headers",
+                url = server.url("/valid.bin").toString(),
+                destinationFile = destFile,
+                headers = mapOf("Invalid-Header\nName" to "value\r\ninjection")
+            ),
+            onProgress = { snapshots.add(it) }
+        )
+
+        assertTrue("Outcome should be Failure on malformed headers", outcome is HttpRangeDownloader.DownloadOutcome.Failure)
+        val failure = outcome as HttpRangeDownloader.DownloadOutcome.Failure
+        assertTrue("Error should be IllegalArgumentException", failure.error is IllegalArgumentException)
+        assertFalse("Malformed header request should not be resumable", failure.canResume)
+        assertEquals("test-bad-headers", failure.downloadId)
+        val lastSnapshot = snapshots.lastOrNull()
+        assertNotNull("Should emit an error progress snapshot", lastSnapshot)
+        assertEquals(HttpRangeDownloader.ProgressSnapshot.Status.ERROR, lastSnapshot?.status)
+    }
 }

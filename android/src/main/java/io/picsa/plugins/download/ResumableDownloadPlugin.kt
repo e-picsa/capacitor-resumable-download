@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
+import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
 import androidx.work.*
 import com.getcapacitor.*
@@ -141,6 +142,7 @@ class ResumableDownloadPlugin : Plugin() {
     }
 
     private val savedOptions = ConcurrentHashMap<String, DownloadConfig>()
+    private val activeObservers = ConcurrentHashMap<String, Pair<LiveData<WorkInfo?>, Observer<WorkInfo?>>>()
     private val prefs: SharedPreferences by lazy {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -151,6 +153,14 @@ class ResumableDownloadPlugin : Plugin() {
     }
 
     override fun handleOnDestroy() {
+        // Remove active WorkInfo observers on main thread to avoid pinning Activity/WebView in RAM
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            for ((_, pair) in activeObservers) {
+                pair.first.removeObserver(pair.second)
+            }
+            activeObservers.clear()
+        }
+
         if (instance == this) {
             instance = null
         }
@@ -456,6 +466,7 @@ class ResumableDownloadPlugin : Plugin() {
                 override fun onChanged(value: WorkInfo?) {
                     if (value == null) return
                     if (value.state.isFinished) {
+                        activeObservers.remove(config.downloadId)
                         liveData.removeObserver(this)
                         val output = value.outputData
                         when (value.state) {
@@ -521,6 +532,7 @@ class ResumableDownloadPlugin : Plugin() {
                     }
                 }
             }
+            activeObservers[config.downloadId] = Pair(liveData, observer)
             liveData.observeForever(observer)
         }
     }

@@ -191,6 +191,8 @@ class DownloadWorker(
         val destinationFile = File(destPath)
         val downloader = HttpRangeDownloader()
 
+        var lastNotificationMs = 0L
+
         val outcome = try {
             downloader.execute(
                 request = HttpRangeDownloader.DownloadRequest(
@@ -203,30 +205,34 @@ class DownloadWorker(
                     ResumableDownloadPlugin.emitProgress(snapshot)
 
                     if (notificationEnabled && foregroundPromoted && snapshot.status == HttpRangeDownloader.ProgressSnapshot.Status.DOWNLOADING) {
-                        runCatching {
-                            val progressText = formatProgressText(snapshot.bytesDownloaded, snapshot.totalBytes)
-                            val builder = NotificationCompat.Builder(context, channelId)
-                                .setContentTitle(title)
-                                .setContentText(subtitle ?: progressText)
-                                .setSmallIcon(android.R.drawable.stat_sys_download)
-                                .setOngoing(true)
-                                .setOnlyAlertOnce(true)
-                                .setProgress(100, snapshot.progress, snapshot.totalBytes <= 0)
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotificationMs >= 1000L) {
+                            lastNotificationMs = now
+                            runCatching {
+                                val progressText = formatProgressText(snapshot.bytesDownloaded, snapshot.totalBytes)
+                                val builder = NotificationCompat.Builder(context, channelId)
+                                    .setContentTitle(title)
+                                    .setContentText(subtitle ?: progressText)
+                                    .setSmallIcon(android.R.drawable.stat_sys_download)
+                                    .setOngoing(true)
+                                    .setOnlyAlertOnce(true)
+                                    .setProgress(100, snapshot.progress, snapshot.totalBytes <= 0)
 
-                            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                            val pendingIntent = if (launchIntent != null) {
-                                PendingIntent.getActivity(
-                                    context,
-                                    0,
-                                    launchIntent,
-                                    PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-                                )
-                            } else null
-                            if (pendingIntent != null) {
-                                builder.setContentIntent(pendingIntent)
+                                val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                                val pendingIntent = if (launchIntent != null) {
+                                    PendingIntent.getActivity(
+                                        context,
+                                        notificationId,
+                                        launchIntent,
+                                        PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+                                    )
+                                } else null
+                                if (pendingIntent != null) {
+                                    builder.setContentIntent(pendingIntent)
+                                }
+
+                                notificationManager.notify(notificationId, builder.build())
                             }
-
-                            notificationManager.notify(notificationId, builder.build())
                         }
                     }
                 },
@@ -335,7 +341,7 @@ class DownloadWorker(
         val pendingIntent = if (launchIntent != null) {
             PendingIntent.getActivity(
                 context,
-                0,
+                notificationId,
                 launchIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
             )
@@ -367,7 +373,7 @@ class DownloadWorker(
         val pendingIntent = if (launchIntent != null) {
             PendingIntent.getActivity(
                 context,
-                0,
+                completionNotificationId,
                 launchIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
             )
