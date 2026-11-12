@@ -3,9 +3,18 @@
 [![CI](https://github.com/e-picsa/capacitor-resumable-download/actions/workflows/ci.yml/badge.svg)](https://github.com/e-picsa/capacitor-resumable-download/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-A high-resilience Capacitor 8 plugin for **large file downloads over unstable, low-bandwidth, and intermittent mobile networks**.
+A high-resilience Capacitor plugin for **large file downloads over unstable, low-bandwidth, and intermittent mobile networks**.
 
 Built specifically for offline-first rural deployments (such as PICSA agricultural extension tools), this plugin solves the critical failure modes of `Filesystem.downloadFile()` by utilizing **HTTP Range requests, sidecar ETag tracking, and Android Jetpack WorkManager background workers**.
+
+---
+
+## Compatibility
+
+| Plugin Version | Capacitor Version | Status         |
+| :------------- | :---------------- | :------------- |
+| `0.x.x`        | `8.x.x`           | Active support |
+| `0.x.x`        | `9.x.x`           | Active support |
 
 ---
 
