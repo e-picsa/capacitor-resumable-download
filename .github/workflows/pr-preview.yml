@@ -3,6 +3,16 @@ name: PR Preview
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.agents/**'
+      - 'docs/**'
+      - '.gitignore'
+      - '.prettierignore'
+      - '.editorconfig'
+      - '.pr_agent.toml'
+      - 'LICENSE'
 
 permissions:
   contents: read
