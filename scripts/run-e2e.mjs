@@ -119,11 +119,15 @@ async function getFreePort() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Run ADB command
-function adb(cmd, serial = null) {
+function adb(cmd, serial = null, timeoutMs = 60000) {
   const serialFlag = serial ? `-s ${serial}` : '';
   const fullCmd = `adb ${serialFlag} ${cmd}`.trim();
   try {
-    return execSync(fullCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    return execSync(fullCmd, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    }).trim();
   } catch (err) {
     const stderr = err.stderr ? err.stderr.toString() : err.message;
     throw new Error(`ADB failed: "${fullCmd}" -> ${stderr.trim()}`);
@@ -382,51 +386,9 @@ async function main() {
   const startTime = Date.now();
   console.log(`\n${c.bold}=== Capacitor Resumable Download Automated E2E Runner ===${c.reset}\n`);
 
-  // 1. Ensure mock server
-  const serverHealth = await ensureServer();
-  const EXPECTED_SIZE = serverHealth.size;
-  const EXPECTED_ETAG = serverHealth.etag;
-
-  // 2. Detect device
-  logStep('Detecting Android device...');
-  const serial = detectDevice();
-  logPass(`Selected device: ${serial}`);
-
-  // 3. Port reversal (maps emulator's localhost:8080 to host's localhost:8080)
-  logStep(
-    `Configuring reverse port forwarding (device :${SERVER_PORT} -> host :${SERVER_PORT})...`,
-  );
-  adb(`reverse tcp:${SERVER_PORT} tcp:${SERVER_PORT}`, serial);
-  logPass('Reverse port forwarded.');
-
-  // 4. Build if required
-  if (!SKIP_BUILD) {
-    if (!fs.existsSync(APK_PATH)) {
-      logStep('Debug APK not found. Running yarn demo:build...');
-      execSync('yarn demo:build', { cwd: REPO_ROOT, stdio: 'inherit' });
-    } else {
-      logInfo('Using existing built APK (--skip-build to prevent rebuild checks)');
-    }
-  }
-
-  // 5. Install if required
-  if (!SKIP_INSTALL) {
-    logStep(`Installing APK on ${serial}...`);
-    adb(`install -r "${APK_PATH}"`, serial);
-    logPass('APK installed successfully.');
-  }
-
-  // 6. Grant notification permissions and launch
-  logStep('Granting POST_NOTIFICATIONS and launching app...');
-  try {
-    adb(`shell pm grant ${APP_PACKAGE} android.permission.POST_NOTIFICATIONS`, serial);
-  } catch {}
-  adb(`shell am start -W -n ${APP_ACTIVITY}`, serial);
-  await sleep(1500);
-  logPass('App launched.');
-
-  // 7. Connect via CDP
-  const { client, hostPort } = await connectToWebView(serial);
+  let serial = null;
+  let client = null;
+  let hostPort = null;
 
   const testResults = [];
   function recordTest(name, passed, durationMs, error = null) {
@@ -438,39 +400,87 @@ async function main() {
     }
   }
 
-  // Base download URL that routes to host test server:
-  // Dynamically probe candidate loopback endpoints from inside WebView:
-  // 127.0.0.1 (via adb reverse), localhost (via adb reverse), or 10.0.2.2 (QEMU gateway)
-  logStep('Detecting reachable test server host from device...');
-  const candidateHosts = [
-    `127.0.0.1:${SERVER_PORT}`,
-    `localhost:${SERVER_PORT}`,
-    `10.0.2.2:${SERVER_PORT}`,
-  ];
-  let workingHost = null;
-  for (const host of candidateHosts) {
-    try {
-      const ok = await client.evaluate(`
-        fetch('http://${host}/health')
-          .then(r => r.json())
-          .then(d => d.ok === true)
-          .catch(() => false)
-      `);
-      if (ok === true) {
-        workingHost = host;
-        break;
-      }
-    } catch {}
-  }
-  if (!workingHost) {
-    throw new Error(
-      `Android device cannot reach mock server on any candidate loopback host (${candidateHosts.join(', ')}). Check reverse port forwarding and network security config.`,
-    );
-  }
-  logPass(`Device connected to test server via: http://${workingHost}`);
-  const baseUrl = `http://${workingHost}/large.bin`;
-
   try {
+    // 1. Ensure mock server
+    const serverHealth = await ensureServer();
+    const EXPECTED_SIZE = serverHealth.size;
+    const EXPECTED_ETAG = serverHealth.etag;
+
+    // 2. Detect device
+    logStep('Detecting Android device...');
+    serial = detectDevice();
+    logPass(`Selected device: ${serial}`);
+
+    // 3. Port reversal (maps emulator's localhost:8080 to host's localhost:8080)
+    logStep(
+      `Configuring reverse port forwarding (device :${SERVER_PORT} -> host :${SERVER_PORT})...`,
+    );
+    adb(`reverse tcp:${SERVER_PORT} tcp:${SERVER_PORT}`, serial);
+    logPass('Reverse port forwarded.');
+
+    // 4. Build if required
+    if (!SKIP_BUILD) {
+      if (!fs.existsSync(APK_PATH)) {
+        logStep('Debug APK not found. Running yarn demo:build...');
+        execSync('yarn demo:build', { cwd: REPO_ROOT, stdio: 'inherit' });
+      } else {
+        logInfo('Using existing built APK (--skip-build to prevent rebuild checks)');
+      }
+    }
+
+    // 5. Install if required
+    if (!SKIP_INSTALL) {
+      logStep(`Installing APK on ${serial}...`);
+      adb(`install -r "${APK_PATH}"`, serial);
+      logPass('APK installed successfully.');
+    }
+
+    // 6. Grant notification permissions and launch
+    logStep('Granting POST_NOTIFICATIONS and launching app...');
+    try {
+      adb(`shell pm grant ${APP_PACKAGE} android.permission.POST_NOTIFICATIONS`, serial);
+    } catch {}
+    adb(`shell am start -W -n ${APP_ACTIVITY}`, serial);
+    await sleep(1500);
+    logPass('App launched.');
+
+    // 7. Connect via CDP
+    const cdpConn = await connectToWebView(serial);
+    client = cdpConn.client;
+    hostPort = cdpConn.hostPort;
+
+    // Base download URL that routes to host test server:
+    // Dynamically probe candidate loopback endpoints from inside WebView:
+    // 127.0.0.1 (via adb reverse), localhost (via adb reverse), or 10.0.2.2 (QEMU gateway)
+    logStep('Detecting reachable test server host from device...');
+    const candidateHosts = [
+      `127.0.0.1:${SERVER_PORT}`,
+      `localhost:${SERVER_PORT}`,
+      `10.0.2.2:${SERVER_PORT}`,
+    ];
+    let workingHost = null;
+    for (const host of candidateHosts) {
+      try {
+        const ok = await client.evaluate(`
+          fetch('http://${host}/health')
+            .then(r => r.json())
+            .then(d => d.ok === true)
+            .catch(() => false)
+        `);
+        if (ok === true) {
+          workingHost = host;
+          break;
+        }
+      } catch {}
+    }
+    if (!workingHost) {
+      throw new Error(
+        `Android device cannot reach mock server on any candidate loopback host (${candidateHosts.join(', ')}). Check reverse port forwarding and network security config.`,
+      );
+    }
+    logPass(`Device connected to test server via: http://${workingHost}`);
+    const baseUrl = `http://${workingHost}/large.bin`;
+
     // -----------------------------------------------------------------------
     // TEST 1 & 2: Start Throttled Download, Pause, and Verify .part / metadata
     // -----------------------------------------------------------------------
@@ -899,18 +909,26 @@ async function main() {
     }
   } finally {
     // Teardown
-    try {
-      adb('logcat -d -v time > /tmp/e2e-logcat.txt', serial);
-      logInfo('Captured logcat snapshot to /tmp/e2e-logcat.txt');
-    } catch {}
+    if (serial) {
+      try {
+        adb('logcat -d -v time > /tmp/e2e-logcat.txt', serial, 10000);
+        logInfo('Captured logcat snapshot to /tmp/e2e-logcat.txt');
+      } catch {}
+    }
 
-    client.close();
-    try {
-      adb(`reverse --remove tcp:${SERVER_PORT}`, serial);
-    } catch {}
-    try {
-      adb(`forward --remove tcp:${hostPort}`, serial);
-    } catch {}
+    if (client) {
+      client.close();
+    }
+    if (serial) {
+      try {
+        adb(`reverse --remove tcp:${SERVER_PORT}`, serial, 5000);
+      } catch {}
+      if (hostPort) {
+        try {
+          adb(`forward --remove tcp:${hostPort}`, serial, 5000);
+        } catch {}
+      }
+    }
 
     if (serverChildProcess && !KEEP_SERVER) {
       serverChildProcess.kill('SIGTERM');

@@ -68,13 +68,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: |
-            yarn test:e2e --skip-build || {
-              EXIT_CODE=$?
-              echo "E2E runner exited with code $EXIT_CODE; capturing logcat before emulator termination..."
-              timeout 10s adb logcat -d -v time > /tmp/e2e-logcat.txt 2>/dev/null || true
-              exit $EXIT_CODE
-            }
+          script: yarn test:e2e --skip-build
 
       - name: Archive test artifacts on failure
         if: failure()
