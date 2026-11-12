@@ -66,9 +66,10 @@ yarn serve:test-file                # :8080, 50MB, strong ETag, Range + throttle
 yarn verify:cdn http://localhost:8080/large.bin
 ```
 
-The pill next to the presets (`Local server: reachable · 20.0 MB` /
-`unreachable`) probes `http://10.0.2.2:8080/health` on launch and every 15s,
-so the demo itself tells you whether the local option will work. It needs
+The dot by the `Local throttled server` button shows whether the host test
+file server is reachable (tap it for details); it probes
+`http://10.0.2.2:8080/health` on launch and every 5s, so the demo itself
+tells you whether the local option will work. This needs
 `android.allowMixedContent` (demo-only, in `capacitor.config.ts`) plus the
 server's CORS header — both already wired.
 

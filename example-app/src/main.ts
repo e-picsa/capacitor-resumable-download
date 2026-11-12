@@ -21,7 +21,8 @@ const presetLocal = document.getElementById('presetLocal') as HTMLButtonElement;
 const diskDetails = document.getElementById('diskDetails') as HTMLDivElement;
 const taskList = document.getElementById('taskList') as HTMLDivElement;
 const logConsole = document.getElementById('logConsole') as HTMLDivElement;
-const localServerStatus = document.getElementById('localServerStatus') as HTMLSpanElement;
+const localServerDot = document.getElementById('localServerDot') as HTMLSpanElement;
+const localServerInfo = document.getElementById('localServerInfo') as HTMLParagraphElement;
 
 interface TaskState {
   downloadId: string;
@@ -100,8 +101,8 @@ const LOCAL_SERVER_HEALTH_URL = 'http://10.0.2.2:8080/health';
 // Probes the host test server so the UI can show whether the local preset
 // will work. Manual timeout (not AbortSignal.timeout) for old WebViews.
 async function checkLocalServer() {
-  localServerStatus.className = 'server-pill checking';
-  localServerStatus.textContent = 'Checking local server…';
+  localServerDot.className = 'dot checking';
+  localServerInfo.textContent = 'Checking for the local test server…';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
   try {
@@ -109,18 +110,21 @@ async function checkLocalServer() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const health = (await res.json()) as { ok?: boolean; size?: number };
     if (!health.ok) throw new Error('unhealthy');
-    const size = typeof health.size === 'number' ? ` · ${formatBytes(health.size)}` : '';
-    localServerStatus.className = 'server-pill reachable';
-    localServerStatus.textContent = `Local server: reachable${size}`;
+    const size = typeof health.size === 'number' ? formatBytes(health.size) : null;
+    localServerDot.className = 'dot reachable';
+    localServerInfo.textContent = size
+      ? `Reachable — serving a ${size} test file with artificial slowdown, ideal for pause/resume testing.`
+      : 'Reachable.';
   } catch {
-    localServerStatus.className = 'server-pill unreachable';
-    localServerStatus.textContent = 'Local server: unreachable';
+    localServerDot.className = 'dot unreachable';
+    localServerInfo.textContent =
+      'Unreachable — make sure the test server is running on the host computer, then retry.';
   } finally {
     clearTimeout(timer);
   }
 }
 
-setInterval(checkLocalServer, 15000);
+setInterval(checkLocalServer, 5000);
 
 function rowActions(status: string): Array<{ action: string; label: string; enabled: boolean }> {
   if (status === 'downloading') {
