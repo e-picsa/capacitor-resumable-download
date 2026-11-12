@@ -160,32 +160,14 @@ No demo rebuild or reinstall needed afterwards — relaunch the app and confirm
 
 ### 6c. TLS on 7.0: use the local server, not HTTPS presets
 
-Android 7.0's system trust store predates Let's Encrypt's ISRG roots, so **all
-modern-CA HTTPS fails on API 24** with:
+Android 7.0 lacks modern root CAs in its system trust store (including ISRG Root X1/X2, Let's Encrypt, and Cloudflare R2), so all modern-CA HTTPS downloads fail on API 24 with `SSLHandshakeException`.
 
-```text
-java.security.cert.CertPathValidatorException: Trust anchor for certification path not found.
-→ exceptionClass=SSLHandshakeException, canResume=false, 0 bytes
-```
+See the canonical reference in **[`docs/known-issues-and-caveats.md`](known-issues-and-caveats.md#android-70-api-24-vs-android-711-api-25-the-tls--lets-encrypt-root-ca-trap)** for the full trust store analysis and verification notes.
 
-Verified 2026-11-11 on `older_device`: both `proof.ovh.net` (chain ends at
-ISRG Root X1) and the R2 bucket `*.r2.dev` (via ISRG Root X2, cross-signed by
-X1) fail identically at the handshake. ISRG Root X1 only entered the system
-store in **7.1**, so this affects 7.0 specifically — your memory was right.
+**Rule for testing**:
 
-Two consequences:
-
-- The Chrome 119 upgrade does **not** fix native downloads: OkHttp uses the
-  platform trust store, not Chrome's. The WebView upgrade only fixes the demo
-  web UI.
-- The R2 bucket does **not** help on 7.0 either. For API 24 testing, use the
-  local cleartext server (`http://10.0.2.2:8080/...`, already allow-listed in
-  `network_security_config.xml`) — verified working (5MB completed, plus the
-  pause/resume/cancel cycle in §6b). The user's local failure was just the
-  stopped server, not a device issue.
-
-Rule of thumb: API 24 → local HTTP server only; API 25+ / modern devices →
-remote HTTPS presets are fine.
+- On API 24: always test using the local HTTP test server (`http://10.0.2.2:8080/large.bin?throttle_kbps=200`).
+- On API 25+ / modern devices: remote HTTPS presets work out of the box.
 
 ### 6b. Run the download test
 

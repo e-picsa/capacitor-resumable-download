@@ -1,0 +1,8 @@
+dist/
+example-app/dist/
+example-app/android/app/src/main/assets/
+example-app/android/app/build/
+example-app/android/.gradle/
+android/build/
+android/.gradle/
+node_modules/

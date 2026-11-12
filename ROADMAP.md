@@ -1,6 +1,35 @@
 # Project Roadmap, Architecture & Testing Strategy
 
-This document serves as the **central source of truth** for architectural strategy, Capacitor versioning, the Android testing matrix, immediate code improvements, and long-term E2E test automation for `@picsa/capacitor-resumable-download`.
+This document serves as the **central source of truth** for architectural strategy, Capacitor versioning, the Android testing matrix, code improvements, and automated E2E test automation for `@picsa/capacitor-resumable-download`.
+
+---
+
+## Executive Summary Checklist
+
+| Track                                | Milestone                                                 |     Status      | Details / Reference                                                                                                                                                   |
+| :----------------------------------- | :-------------------------------------------------------- | :-------------: | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Native Architecture & Resilience** | Strict 3-file native architecture                         |    **Done**     | Zero-Android core (`HttpRangeDownloader.kt`), WorkManager (`DownloadWorker.kt`), Capacitor bridge (`ResumableDownloadPlugin.kt`).                                     |
+|                                      | JVM byte-range test suite (< 1s)                          |    **Done**     | Pure Kotlin + MockWebServer in `HttpRangeDownloaderTest.kt` passing 100%.                                                                                             |
+|                                      | Sidecar atomic metadata lifecycle                         |    **Done**     | `<dest>.part.meta.json` created alongside `.part`, purged on success/cancel, retained on preemption.                                                                  |
+| **Code Audit & Bug Fixes**           | Completion notification wiped by WorkManager              |    **Done**     | Merged in PR #10 (uses distinct notification ID `(notificationId + 1)`).                                                                                              |
+|                                      | Bring app to foreground on notification tap               |    **Done**     | Merged in PR #10 (`PendingIntent` attached to foreground & completion notifications).                                                                                 |
+|                                      | Pre-API 33 permission alias mismatch                      |    **Done**     | Merged in PR #10 (`checkPermissions` / `requestPermissions` return `"notifications"`).                                                                                |
+|                                      | Bridge flooding & notification rate limiting              |    **Done**     | Merged in PR #10 (active streaming throttled strictly to `elapsed >= 250`).                                                                                           |
+|                                      | Unhandled `IllegalArgumentException` on bad URLs          |    **Done**     | Merged in PR #10 (caught cleanly, returning `DownloadOutcome.Failure`).                                                                                               |
+|                                      | Notification ID hash overflow / zero handling             |    **Done**     | Merged in PR #10 (`(downloadId.hashCode() and 0x7fffffff).coerceAtLeast(1)`).                                                                                         |
+|                                      | Cancel vs. active worker file race condition              |    **Done**     | Merged in PR #10 (checked `isCancelled()` before opening `RandomAccessFile`).                                                                                         |
+|                                      | Custom notification icon support (`icon?: string`)        | **Backlogged**  | Medium priority; expose optional drawable name in `NotificationOptions`.                                                                                              |
+| **Capacitor 8 / 9 Dual Support**     | Widen `peerDependencies` (`^8.0.0 \|\| ^9.0.0`)           | **In Progress** | Active in thread `[Capacitor 9 Compatibility and SDK Version Updates](t3-thread://v2/625e4d3b-cbb2-4fa1-ab4e-6b884550f9f0/mcp:2e0c4683-f142-4ac7-bfd7-18feb56ef936)`. |
+|                                      | Dynamic SDK defaults (`minSdk 24`, `compileSdk 37`)       | **In Progress** | Plugin dynamically honors host app SDK settings without separate branches.                                                                                            |
+|                                      | Remove deprecated `targetSdkVersion` in library           | **In Progress** | Aligns with AGP 9 build standards.                                                                                                                                    |
+| **Testing Tooling & Demo App**       | Local throttled mock server (`serve-test-file.mjs`)       |    **Done**     | Merged in PR #6 (`?throttle_kbps=`, `?throttle_ms=`, strong ETags, disconnect cleanup).                                                                               |
+|                                      | Plugin staleness guard (`sync-plugin.mjs --check`)        |    **Done**     | Merged in PR #6 (`yarn demo:sync` / `yarn demo:build` enforces fresh code in demo app).                                                                               |
+|                                      | Multi-task demo UI with live per-row controls             |    **Done**     | Merged in PR #6 (readonly auto-derived ID, ⓘ popups, per-row delete).                                                                                                 |
+|                                      | Android 7.0 (API 24) testing procedure                    |    **Done**     | Documented in `docs/demo-testing.md` §6 with Chrome 119 sideloading.                                                                                                  |
+|                                      | Documentation reconciliation & cert trap fix              |    **Done**     | PR #11 (single source of truth in `docs/known-issues-and-caveats.md`).                                                                                                |
+| **Automated E2E Testing & CI**       | Tier 1: Host JVM unit tests in CI                         |    **Done**     | Runs on every commit in `.github/workflows/ci.yml`.                                                                                                                   |
+|                                      | Tier 2: Single-Emulator CI E2E (API 34)                   | **In Progress** | Active in thread `[Automated Android E2E Testing and CI Pipeline](t3-thread://v2/625e4d3b-cbb2-4fa1-ab4e-6b884550f9f0/mcp:a8761f68-6860-47a6-aedd-87c7d64426ef)`.     |
+|                                      | Tier 3: Nightly Multi-Version Matrix (API 24, 31, 33, 34) |   **Planned**   | Scheduled for Phase 3 to test Doze, permission prompts, and network toggles.                                                                                          |
 
 ---
 
@@ -44,16 +73,13 @@ Rather than splitting into fragmented `8.x` and `9.x` branches, the plugin will 
 
 Testing every minor Android version is unnecessary because behavioral constraints accumulate monotonically. The testing suite focuses on **4 strategic OS targets** plus **1 physical OEM family**:
 
-| Target                                    |    API Level    | Architectural Validation Focus                                                                                                                                                       |
-| :---------------------------------------- | :-------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Android 7.0 (Legacy Floor)**            |   **API 24**    | Tests `tryNioAtomicMove` reflection fallback to `File.renameTo()`, pre-channel notifications, and older CA root store behavior (see TLS caveat below).                               |
-| **Android 12 (FGS Restrictions)**         |   **API 31**    | Tests background start restrictions (`ForegroundServiceStartNotAllowedException`), validating the worker's `runCatching` fallback to in-app execution (`FOREGROUND_SERVICE_FAILED`). |
-| **Android 13 (Notification Perms)**       |   **API 33**    | Tests runtime `POST_NOTIFICATIONS` permission prompt handling, ensuring background WorkManager execution continues unimpeded if notifications are denied.                            |
-| **Android 14/15 (Strict FGS & Timeouts)** |  **API 34/35**  | Tests strict `FOREGROUND_SERVICE_TYPE_DATA_SYNC` enforcement and Android 15's 6-hour cumulative runtime limit on foreground data synchronization.                                    |
-| **Physical OEM Device (Bonus)**           | **Android 14+** | **Samsung (OneUI) or Xiaomi (HyperOS)**: Tests real-world screen-off socket preemption and battery saver background task termination.                                                |
-
-> [!WARNING]
-> **Android 7.0 (API 24) TLS / Let's Encrypt & R2 Quirk**: Android 7.0's 148-cert system trust store contains no ISRG Root X1/X2, Let's Encrypt, or Cloudflare root certificates. All modern-CA HTTPS downloads fail with `SSLHandshakeException` on API 24. For Android 7.0 testing, always use the local cleartext HTTP test server (`http://10.0.2.2:8080`), and use Android 7.1+ for remote HTTPS scenarios. Full details are consolidated in [`docs/known-issues-and-caveats.md`](docs/known-issues-and-caveats.md) and [`docs/demo-testing.md`](docs/demo-testing.md) §6c.
+| Target                                    |    API Level    | Architectural Validation Focus                                                                                                                                                                 |
+| :---------------------------------------- | :-------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Android 7.0 (Legacy Floor)**            |   **API 24**    | Tests `tryNioAtomicMove` reflection fallback to `File.renameTo()`, pre-channel notifications, and older CA root store behavior (see canonical TLS note in `docs/known-issues-and-caveats.md`). |
+| **Android 12 (FGS Restrictions)**         |   **API 31**    | Tests background start restrictions (`ForegroundServiceStartNotAllowedException`), validating the worker's `runCatching` fallback to in-app execution (`FOREGROUND_SERVICE_FAILED`).           |
+| **Android 13 (Notification Perms)**       |   **API 33**    | Tests runtime `POST_NOTIFICATIONS` permission prompt handling, ensuring background WorkManager execution continues unimpeded if notifications are denied.                                      |
+| **Android 14/15 (Strict FGS & Timeouts)** |  **API 34/35**  | Tests strict `FOREGROUND_SERVICE_TYPE_DATA_SYNC` enforcement and Android 15's 6-hour cumulative runtime limit on foreground data synchronization.                                              |
+| **Physical OEM Device (Bonus)**           | **Android 14+** | **Samsung (OneUI) or Xiaomi (HyperOS)**: Tests real-world screen-off socket preemption and battery saver background task termination.                                                          |
 
 ---
 
@@ -88,7 +114,7 @@ Testing every minor Android version is unnecessary because behavioral constraint
   6. Mid-stream network drop: simulates socket drop via `?drop_after_bytes=`, verifies partial bytes preserved, and asserts successful resume recovery.
 - **Documentation**: Full architecture and execution guide in [`docs/e2e-testing.md`](docs/e2e-testing.md).
 
-### Phase 3: Nightly Multi-Version Matrix & Network Drop Simulation
+### Phase 3: Nightly Multi-Version Matrix & Network Drop Simulation (Planned)
 
 - Scheduled nightly workflow across **API 24, 31, 33, and 34**.
 - Simulates connectivity drops mid-stream via `adb shell svc wifi disable` and verifies resilient resumption upon `adb shell svc wifi enable`.
@@ -96,46 +122,15 @@ Testing every minor Android version is unnecessary because behavioral constraint
 
 ---
 
-## 4. Current Code Audit & Implementation Tracking
+## 4. Documentation Architecture: Single Sources of Truth
 
-The following improvements were identified during the codebase audit and dispatched for immediate implementation:
+To prevent drift across files, documentation responsibilities are strictly separated:
 
-### High Priority (Functional & Crash Fixes)
-
-1. **WorkManager Wiping Completion Notification**:
-   - `DownloadWorker.kt`: `showCompletionNotification` currently uses `notificationId`, which WorkManager cancels as soon as `doWork()` finishes.
-   - _Fix_: Use a separate ID for completion (e.g. `(notificationId + 1)` or `"done_$downloadId".hashCode() and 0x7fffffff`).
-2. **Missing `setContentIntent` on Notification Tap**:
-   - `DownloadWorker.kt`: Tapping the foreground or completion notification currently does nothing.
-   - _Fix_: Attach `PendingIntent` using `context.packageManager.getLaunchIntentForPackage(...)`.
-3. **Permission Alias Mismatch (`display` vs `notifications`)**:
-   - `ResumableDownloadPlugin.kt`: `checkPermissions` and `requestPermissions` return `{ "display": "granted" }` on pre-API 33 devices, whereas the plugin declares `alias = "notifications"`.
-   - _Fix_: Change `"display"` to `"notifications"`.
-4. **Bridge Flooding & Notification Rate Limiting**:
-   - `HttpRangeDownloader.kt`: Throttling condition `if (elapsed >= 250 || delta >= 1)` bypasses the 250ms limit on fast transfers.
-   - _Fix_: Throttle active streaming strictly by time (`if (elapsed >= 250)`).
-5. **Malformed URL `IllegalArgumentException`**:
-   - `HttpRangeDownloader.kt`: OkHttp's `Request.Builder().url()` throws `IllegalArgumentException` on invalid URLs, which currently crashes the coroutine without reporting error status.
-   - _Fix_: Wrap URL builder in `try/catch` and return `DownloadOutcome.Failure(..., canResume = false)`.
-
-### Medium Priority (Lifecycle & Edge Cases)
-
-6. **Notification Small Icon Customization**:
-   - Add optional `icon?: string` to `NotificationOptions` allowing applications to pass a custom drawable name, with fallback to system drawables.
-7. **`notificationId` Hash Code Zero / Overflow**:
-   - `notificationId = (downloadId.hashCode() and 0x7fffffff).coerceAtLeast(1)`.
-8. **`cancel()` vs. Active Worker Race**:
-   - Check `if (isCancelled())` immediately before creating or writing to the `.part` file in `HttpRangeDownloader`.
-
----
-
-## 5. Architectural Invariants & AI Governance
-
-To maintain velocity while preserving codebase stability across multi-agent turns:
-
-1. **Strict 3-File Native Architecture**:
-   - `android/src/main/java/io/picsa/plugins/download/HttpRangeDownloader.kt` (pure Kotlin, 0 Android imports).
-   - `android/src/main/java/io/picsa/plugins/download/DownloadWorker.kt` (WorkManager execution engine).
-   - `android/src/main/java/io/picsa/plugins/download/ResumableDownloadPlugin.kt` (Capacitor bridge).
-2. **Fast JVM Feedback**: Always verify core download logic via `./gradlew test` (runs in < 1 second).
-3. **Synchronized Documentation**: Any change to API parameters or runtime behavior must update [`README.md`](file:///Users/chrismclarke/Apps/e-picsa/capacitor-resumable-download/README.md), [`AGENTS.md`](file:///Users/chrismclarke/Apps/e-picsa/capacitor-resumable-download/AGENTS.md), [`docs/demo-testing.md`](file:///Users/chrismclarke/Apps/e-picsa/capacitor-resumable-download/docs/demo-testing.md), and [`docs/known-issues-and-caveats.md`](file:///Users/chrismclarke/Apps/e-picsa/capacitor-resumable-download/docs/known-issues-and-caveats.md).
+| File                                                                       | Canonical Scope & Purpose                                                                   |
+| :------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------ |
+| **[`README.md`](README.md)**                                               | User-facing public API documentation, installation guide, and compatibility support matrix. |
+| **[`AGENTS.md`](AGENTS.md)**                                               | AI developer rules, core architectural invariants, and essential terminal commands.         |
+| **[`ROADMAP.md`](ROADMAP.md)**                                             | Strategic plan, executive checklists, Capacitor versioning, and test roadmap.               |
+| **[`docs/demo-testing.md`](docs/demo-testing.md)**                         | Practical, step-by-step manual and `agent-device` interactive emulator workflow.            |
+| **[`docs/known-issues-and-caveats.md`](docs/known-issues-and-caveats.md)** | Canonical reference for Android version quirks (TLS roots, FGS restrictions, OEM killers).  |
+| **[`docs/cloudflare-cdn-setup.md`](docs/cloudflare-cdn-setup.md)**         | CDN edge rule configuration (compression disabling, strong ETags, CORS).                    |

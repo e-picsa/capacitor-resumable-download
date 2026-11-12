@@ -1,19 +1,40 @@
+// =============================================================================
+// DUAL-COMPATIBILITY NOTICE (Capacitor 8 & Capacitor 9):
+// =============================================================================
+// DO NOT hardcode modern versions (such as androidxCoreVersion '1.19.0' or minSdkVersion 26) here!
+// Every variable MUST be wrapped with safeExtGet(prop, fallback).
+//
+// Why:
+// 1. Capacitor 8 host apps use AGP 8.x and require androidxCoreVersion <= 1.17.x and minSdkVersion 24.
+//    Hardcoding 1.19.0 breaks Cap 8 builds with:
+//    "Dependency 'androidx.core:core:1.19.0' requires Android Gradle plugin 9.1.0 or higher."
+// 2. Capacitor 9 host apps supply their own versions via rootProject.ext
+//    (minSdkVersion 26, compileSdk 37, androidxCoreVersion 1.19.0), which takes precedence.
+//
+// Automated migration scripts (e.g. @capacitor/plugin-migration-v8-to-v9) may attempt to overwrite
+// this file with hardcoded Cap 9 versions. Do NOT allow removing safeExtGet or bumping fallbacks
+// beyond Capacitor 8 limits in pull requests.
+// =============================================================================
+
+def safeExtGet(prop, fallback) {
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
 ext {
-    minSdkVersion = 24
-    compileSdkVersion = 35
-    targetSdkVersion = 35
-    androidxCoreVersion = '1.13.1'
-    androidxAppCompatVersion = '1.7.0'
-    androidxActivityVersion = '1.9.0'
-    androidxFragmentVersion = '1.7.0'
-    androidxCoordinatorLayoutVersion = '1.2.0'
-    androidxWebkitVersion = '1.11.0'
-    androidxWorkVersion = '2.9.1'
-    androidxJunitVersion = '1.2.1'
-    androidxEspressoCoreVersion = '3.6.1'
-    cordovaAndroidVersion = '12.0.1'
-    okhttpVersion = '4.12.0'
-    coroutinesVersion = '1.8.1'
-    junitVersion = '4.13.2'
-    kotlinVersion = '2.0.21'
+    minSdkVersion = safeExtGet('minSdkVersion', 24)
+    compileSdkVersion = safeExtGet('compileSdkVersion', 36)
+    androidxCoreVersion = safeExtGet('androidxCoreVersion', '1.17.0')
+    androidxAppCompatVersion = safeExtGet('androidxAppCompatVersion', '1.7.1')
+    androidxActivityVersion = safeExtGet('androidxActivityVersion', '1.13.0')
+    androidxFragmentVersion = safeExtGet('androidxFragmentVersion', '1.8.9')
+    androidxCoordinatorLayoutVersion = safeExtGet('androidxCoordinatorLayoutVersion', '1.3.0')
+    androidxWebkitVersion = safeExtGet('androidxWebkitVersion', '1.16.0')
+    androidxWorkVersion = safeExtGet('androidxWorkVersion', '2.9.1')
+    androidxJunitVersion = safeExtGet('androidxJunitVersion', '1.3.0')
+    androidxEspressoCoreVersion = safeExtGet('androidxEspressoCoreVersion', '3.7.0')
+    cordovaAndroidVersion = safeExtGet('cordovaAndroidVersion', '14.0.1')
+    okhttpVersion = safeExtGet('okhttpVersion', '4.12.0')
+    coroutinesVersion = safeExtGet('coroutinesVersion', '1.8.1')
+    junitVersion = safeExtGet('junitVersion', '4.13.2')
+    kotlinVersion = safeExtGet('kotlinVersion', '2.0.21')
 }

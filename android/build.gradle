@@ -20,11 +20,29 @@ apply from: 'variables.gradle'
 
 android {
     namespace "io.picsa.plugins.download"
-    compileSdk safeExtGet('compileSdkVersion', 35)
+
+    // DUAL-COMPATIBILITY NOTICE (Capacitor 8 & Capacitor 9):
+    // Fallback defaults to compileSdk 37 for Capacitor 9, while allowing Capacitor 8 host
+    // apps to supply rootProject.ext.compileSdkVersion = 35/36.
+    compileSdk safeExtGet('compileSdkVersion', 37)
 
     defaultConfig {
+        // DUAL-COMPATIBILITY NOTICE:
+        // DO NOT increase or hardcode minSdk to 26!
+        // Capacitor 8 host apps compile with minSdkVersion = 24.
+        // Capacitor 9 host apps supply rootProject.ext.minSdkVersion = 26.
+        // safeExtGet allows the consuming app's root project to determine minSdk.
         minSdk safeExtGet('minSdkVersion', 24)
-        targetSdk safeExtGet('targetSdkVersion', 35)
+
+        // DUAL-COMPATIBILITY NOTICE:
+        // targetSdk is intentionally omitted. AGP 9 infers targetSdk from compileSdk,
+        // and targetSdk has no runtime effect on library AARs.
+
+        // DUAL-COMPATIBILITY NOTICE:
+        // Ships consumer keep rules for R8 optimization in Capacitor 9 release builds
+        // without affecting Capacitor 8 release builds.
+        consumerProguardFiles "proguard-rules.pro"
+
         versionCode 1
         versionName "0.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -80,7 +98,11 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    implementation "androidx.core:core-ktx:$androidxCoreVersion"
+    // DUAL-COMPATIBILITY NOTICE:
+    // Migrated from androidx.core:core-ktx to androidx.core:core (Cap 9 recommendation).
+    // The version is resolved dynamically via $androidxCoreVersion from variables.gradle
+    // so Capacitor 8 apps use <= 1.17.0 while Capacitor 9 apps resolve to 1.19.0+.
+    implementation "androidx.core:core:$androidxCoreVersion"
     implementation "androidx.work:work-runtime-ktx:$androidxWorkVersion"
     implementation "com.squareup.okhttp3:okhttp:$okhttpVersion"
     implementation "org.json:json:20240303"

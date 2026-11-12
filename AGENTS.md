@@ -32,6 +32,12 @@ Welcome to `@picsa/capacitor-resumable-download`. This repository is designed fr
    - The native plugin is a clean, stateless-per-task executor (`download`, `pause`, `resume`, `cancel`, `getStatus`).
    - Concurrency limits, retries, and task queues remain in the client JS layer (e.g. `p-queue`).
 
+6. **Capacitor 8 & 9 Dual Compatibility Invariants**:
+   - `package.json` must retain peerDependencies: `"@capacitor/core": "^8.0.0 || ^9.0.0"`.
+   - In `android/variables.gradle`, all variables MUST use `safeExtGet(prop, fallback)` with fallbacks pegged to Capacitor 8 constraints (`androidxCoreVersion = '1.17.0'`, `minSdkVersion = 24`, `compileSdkVersion = 36`).
+   - Never allow automated migration scripts (such as `@capacitor/plugin-migration-v8-to-v9`) to hardcode `androidxCoreVersion = '1.19.0'` or `minSdkVersion = 26`, which immediately breaks AGP 8 consumers.
+   - `android/build.gradle` must maintain `minSdk safeExtGet('minSdkVersion', 24)` and `consumerProguardFiles "proguard-rules.pro"`.
+
 ---
 
 ## 2. Essential Commands
