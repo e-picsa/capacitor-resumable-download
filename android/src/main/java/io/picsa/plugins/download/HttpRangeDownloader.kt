@@ -144,8 +144,11 @@ class HttpRangeDownloader(
         var sidecar = readMetaSidecar(metaFile, onDiagnostic)
         var partLength = if (partFile.exists()) partFile.length() else 0L
 
-        // If part file exists but sidecar URL is different, discard corrupt/stale partial file
-        if (partFile.exists() && sidecar != null && sidecar.url != request.url) {
+        // If part file exists but sidecar URL path is different, discard corrupt/stale partial file.
+        // Query parameters (e.g. presigned tokens, throttle parameters) are ignored so refreshed tokens can resume.
+        val baseSidecarUrl = sidecar?.url?.substringBefore('?')
+        val baseRequestUrl = request.url.substringBefore('?')
+        if (partFile.exists() && sidecar != null && baseSidecarUrl != baseRequestUrl) {
             onDiagnostic(
                 "warn",
                 "Existing .part file belongs to a different URL (${sidecar.url} != ${request.url}). Purging.",

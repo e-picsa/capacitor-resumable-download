@@ -75,17 +75,18 @@ Testing every minor Android version is unnecessary because behavioral constraint
 - **Sync Guard Script** (`scripts/sync-plugin.mjs --check`): Prevents stale `node_modules` copies in `example-app` via `yarn demo:sync` and `yarn demo:build`.
 - **Agent Testing Guide** (`docs/demo-testing.md`): Step-by-step automation instructions via `agent-device` and logcat inspection.
 
-### Phase 2: Single-Emulator CI E2E (Next Milestone)
+### Phase 2: Single-Emulator CI E2E (Delivered)
 
-- Set up a GitHub Actions workflow with `reactivecircus/android-emulator-runner` (API 34, Ubuntu KVM).
-- Launch `scripts/serve-test-file.mjs` on the host runner.
-- Route emulator network to host via `http://10.0.2.2:8080`.
-- Execute automated JS test suite via headless WebView or ADB driver asserting:
-  1. Start, throttle, pause at 25% progress.
-  2. Disk assertion via `getFileStatus()`: `.part` exists, target does not exist.
-  3. Resume: sends `Range: bytes=<savedLength>-`, finishes download.
-  4. Final disk assertion: target exists with exact SHA-256 checksum, `.part` and sidecar removed.
-  5. Cancel: immediately purges all partial files from disk.
+- **Automated Test Runner** (`scripts/run-e2e.mjs` / `yarn test:e2e`): Programmatic test runner driving Capacitor WebView via Chrome DevTools Protocol (CDP over ADB, Node 24 native WebSocket, zero test dependencies).
+- **GitHub Actions CI Workflow** (`.github/workflows/e2e-android.yml`): Runs automated emulator tests on Ubuntu KVM (`reactivecircus/android-emulator-runner@v2`, API 34).
+- **Core Verification Scenarios**:
+  1. Start, throttle, and pause mid-flight.
+  2. Disk assertion via `getFileStatus()`: `.part` exists, target does not exist, strong ETag recorded.
+  3. Resume: sends `Range: bytes=<savedLength>-`, asserts `resumedFromBytes > 0`, and finishes download.
+  4. Final disk assertion: target exists with exact size match, `.part` and sidecar cleaned up.
+  5. Cancel: immediately purges active and partial files from disk.
+  6. Mid-stream network drop: simulates socket drop via `?drop_after_bytes=`, verifies partial bytes preserved, and asserts successful resume recovery.
+- **Documentation**: Full architecture and execution guide in [`docs/e2e-testing.md`](docs/e2e-testing.md).
 
 ### Phase 3: Nightly Multi-Version Matrix & Network Drop Simulation
 

@@ -107,6 +107,13 @@ const server = http.createServer((req, res) => {
 
   const throttleKbps = parseInt(url.searchParams.get('throttle_kbps') ?? '0', 10);
   const throttleMsPerChunk = parseInt(url.searchParams.get('throttle_ms') ?? '0', 10);
+  const dropAfterBytes = parseInt(
+    url.searchParams.get('drop_after_bytes') ??
+      (url.searchParams.get('drop_after_kb')
+        ? String(parseInt(url.searchParams.get('drop_after_kb'), 10) * 1024)
+        : '0'),
+    10,
+  );
   const rangeHeader = req.headers.range;
   const ifRange = req.headers['if-range'];
 
@@ -149,14 +156,15 @@ const server = http.createServer((req, res) => {
     sendHeaders(res, 200, { ...commonHeaders, 'Content-Length': String(FILE_SIZE) });
   }
 
-  if (throttleKbps > 0 || throttleMsPerChunk > 0) {
-    // Throttled send: sequential chunk loop with sleep to simulate slow rural network.
-    // Avoids stream pause/resume deadlocks on large Range requests.
+  if (throttleKbps > 0 || throttleMsPerChunk > 0 || dropAfterBytes > 0) {
+    // Sequential chunk loop with sleep/drop support.
+    // Simulates slow rural network and/or mid-stream network preemption.
     (async () => {
       const fd = fs.openSync(FILE_PATH, 'r');
       const CHUNK = 32 * 1024;
       const buf = Buffer.alloc(CHUNK);
       let offset = start;
+      let sentBytes = 0;
       try {
         while (offset <= end) {
           if (res.destroyed || res.writableEnded) break;
@@ -168,10 +176,24 @@ const server = http.createServer((req, res) => {
           const delayMs =
             throttleMsPerChunk > 0
               ? throttleMsPerChunk
-              : Math.max(5, Math.round((read / bytesPerSec) * 1000));
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+              : throttleKbps > 0
+                ? Math.max(5, Math.round((read / bytesPerSec) * 1000))
+                : 0;
+          if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
           if (res.destroyed || res.writableEnded) break;
           const ok = res.write(chunk);
+          sentBytes += read;
+
+          if (dropAfterBytes > 0 && sentBytes >= dropAfterBytes) {
+            console.log(
+              `  [MockServer] Abruptly dropping connection after ${sentBytes} bytes (drop_after_bytes=${dropAfterBytes})`,
+            );
+            res.destroy(new Error('Simulated network drop'));
+            break;
+          }
+
           if (!ok) {
             // Resolve on close too: if the client disconnects while
             // backpressured, 'drain' never fires and the fd would leak.
@@ -192,7 +214,7 @@ const server = http.createServer((req, res) => {
         }
         if (!res.destroyed && !res.writableEnded) res.end();
       } catch (err) {
-        console.error('Throttled send error:', err.message);
+        console.error('Send error:', err.message);
         res.destroy(err);
       } finally {
         fs.closeSync(fd);
