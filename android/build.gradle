@@ -20,11 +20,11 @@ apply from: 'variables.gradle'
 
 android {
     namespace "io.picsa.plugins.download"
-    compileSdk safeExtGet('compileSdkVersion', 35)
+    compileSdk safeExtGet('compileSdkVersion', 37)
 
     defaultConfig {
         minSdk safeExtGet('minSdkVersion', 24)
-        targetSdk safeExtGet('targetSdkVersion', 35)
+        consumerProguardFiles "proguard-rules.pro"
         versionCode 1
         versionName "0.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -80,7 +80,7 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    implementation "androidx.core:core-ktx:$androidxCoreVersion"
+    implementation "androidx.core:core:$androidxCoreVersion"
     implementation "androidx.work:work-runtime-ktx:$androidxWorkVersion"
     implementation "com.squareup.okhttp3:okhttp:$okhttpVersion"
     implementation "org.json:json:20240303"
