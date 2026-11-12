@@ -59,7 +59,7 @@ Options:
 
 const SERVER_PORT = parseInt(getArg('--port', '8080'), 10);
 const FILE_SIZE_MB = parseInt(getArg('--size-mb', '3'), 10);
-const THROTTLE_KBPS = parseInt(getArg('--throttle', '600'), 10);
+const THROTTLE_KBPS = parseInt(getArg('--throttle', '400'), 10);
 const SPECIFIED_SERIAL = getArg('--serial', null);
 const SKIP_BUILD = hasFlag('--skip-build');
 const SKIP_INSTALL = hasFlag('--skip-install');
@@ -203,6 +203,7 @@ async function ensureServer() {
     { stdio: ['ignore', 'pipe', 'pipe'], detached: false },
   );
 
+  serverChildProcess.stdout.on('data', (d) => process.stdout.write(`[mock-server] ${d}`));
   serverChildProcess.stderr.on('data', (d) => process.stderr.write(`[mock-server] ${d}`));
 
   const start = Date.now();
@@ -438,8 +439,36 @@ async function main() {
   }
 
   // Base download URL that routes to host test server:
-  // Using 10.0.2.2 (standard emulator loopback) or localhost (via reverse port)
-  const baseUrl = `http://10.0.2.2:${SERVER_PORT}/large.bin`;
+  // Dynamically probe candidate loopback endpoints from inside WebView:
+  // 127.0.0.1 (via adb reverse), localhost (via adb reverse), or 10.0.2.2 (QEMU gateway)
+  logStep('Detecting reachable test server host from device...');
+  const candidateHosts = [
+    `127.0.0.1:${SERVER_PORT}`,
+    `localhost:${SERVER_PORT}`,
+    `10.0.2.2:${SERVER_PORT}`,
+  ];
+  let workingHost = null;
+  for (const host of candidateHosts) {
+    try {
+      const ok = await client.evaluate(`
+        fetch('http://${host}/health')
+          .then(r => r.json())
+          .then(d => d.ok === true)
+          .catch(() => false)
+      `);
+      if (ok === true) {
+        workingHost = host;
+        break;
+      }
+    } catch {}
+  }
+  if (!workingHost) {
+    throw new Error(
+      `Android device cannot reach mock server on any candidate loopback host (${candidateHosts.join(', ')}). Check reverse port forwarding and network security config.`,
+    );
+  }
+  logPass(`Device connected to test server via: http://${workingHost}`);
+  const baseUrl = `http://${workingHost}/large.bin`;
 
   try {
     // -----------------------------------------------------------------------
@@ -461,38 +490,59 @@ async function main() {
           })()
         `);
 
-        // Start throttled download in background (do not await promise in CDP call)
+        // Start throttled download in background (non-blocking in CDP)
         const throttleUrl = `${baseUrl}?throttle_kbps=${THROTTLE_KBPS}`;
         await client.evaluate(`
-          window.__activePromise = window.ResumableDownload.download({
+          window.__activeState = { done: false, error: null };
+          window.ResumableDownload.download({
             downloadId: '${downloadId}',
             url: '${throttleUrl}',
             destinationPath: '${destPath}',
             directory: 'DATA'
-          }).catch(err => ({ error: err.message || String(err) }));
+          }).then(() => { window.__activeState.done = true; })
+            .catch(err => { window.__activeState.done = true; window.__activeState.error = err.message || String(err); });
           undefined;
         `);
 
-        // Wait until download has made partial progress (> 10% and >= 150KB)
+        // Wait until download has made partial progress (> 5% and >= 100KB)
         let paused = false;
         const waitStart = Date.now();
         let lastBytes = 0;
         while (Date.now() - waitStart < 15000) {
+          const state = await client.evaluate('window.__activeState');
+          if (state?.error) {
+            throw new Error(`Download call rejected: ${state.error}`);
+          }
+          const diags = await client.evaluate(`
+            window.__e2eDiagnosticEvents.filter(d => d.downloadId === '${downloadId}' && d.level === 'error')
+          `);
+          if (diags.length > 0) {
+            throw new Error(`Download error diagnostic: ${diags[0].message} (${diags[0].code})`);
+          }
+
           const events = await client.evaluate(`
             window.__e2eProgressEvents.filter(e => e.downloadId === '${downloadId}')
           `);
           if (events.length > 0) {
             const latest = events[events.length - 1];
             lastBytes = latest.bytesDownloaded;
-            if (latest.bytesDownloaded >= 150 * 1024 || latest.progress >= 10) {
+            if (latest.status === 'error') {
+              throw new Error(`Download failed with error event: ${latest.message || 'unknown'}`);
+            }
+            if (latest.bytesDownloaded >= 100 * 1024 || latest.progress >= 5) {
               await client.evaluate(
                 `window.ResumableDownload.pause({ downloadId: '${downloadId}' })`,
               );
               paused = true;
               break;
             }
+            if (latest.status === 'completed') {
+              throw new Error(
+                `Download completed before pause could be executed (size=${latest.bytesDownloaded})`,
+              );
+            }
           }
-          await sleep(150);
+          await sleep(100);
         }
 
         if (!paused) {
@@ -552,11 +602,13 @@ async function main() {
 
         // Resume download (non-blocking in CDP)
         await client.evaluate(`
-          window.__activePromise = window.ResumableDownload.resume({
+          window.__activeState = { done: false, error: null };
+          window.ResumableDownload.resume({
             downloadId: '${downloadId}',
             url: '${throttleUrl}',
             destinationPath: '${destPath}'
-          }).catch(err => ({ error: err.message || String(err) }));
+          }).then(() => { window.__activeState.done = true; })
+            .catch(err => { window.__activeState.done = true; window.__activeState.error = err.message || String(err); });
           undefined;
         `);
 
@@ -565,6 +617,10 @@ async function main() {
         let resumedFromBytes = 0;
         const waitStart = Date.now();
         while (Date.now() - waitStart < 25000) {
+          const state = await client.evaluate('window.__activeState');
+          if (state?.error) {
+            throw new Error(`Resume call rejected: ${state.error}`);
+          }
           const events = await client.evaluate(`
             window.__e2eProgressEvents.filter(e => e.downloadId === '${downloadId}')
           `);
@@ -630,27 +686,48 @@ async function main() {
           })()
         `);
 
-        // Start throttled download non-blocking
+        // Start throttled download non-blocking (throttle to ~150KB/s to guarantee in-flight cancellation)
+        const cancelThrottleKbps = 150;
         await client.evaluate(`
-          window.__activePromise = window.ResumableDownload.download({
+          window.__activeState = { done: false, error: null };
+          window.ResumableDownload.download({
             downloadId: '${downloadId}',
-            url: '${baseUrl}?throttle_kbps=${THROTTLE_KBPS}',
+            url: '${baseUrl}?throttle_kbps=${cancelThrottleKbps}',
             destinationPath: '${destPath}',
             directory: 'DATA'
-          }).catch(err => ({ error: err.message || String(err) }));
+          }).then(() => { window.__activeState.done = true; })
+            .catch(err => { window.__activeState.done = true; window.__activeState.error = err.message || String(err); });
           undefined;
         `);
 
-        // Wait until some bytes are downloaded
+        // Wait until download has started receiving data
+        let started = false;
         const waitStart = Date.now();
         while (Date.now() - waitStart < 10000) {
+          const state = await client.evaluate('window.__activeState');
+          if (state?.error) {
+            throw new Error(`Cancel test download rejected: ${state.error}`);
+          }
           const events = await client.evaluate(`
             window.__e2eProgressEvents.filter(e => e.downloadId === '${downloadId}')
           `);
-          if (events.length > 0 && events[events.length - 1].bytesDownloaded > 64 * 1024) {
-            break;
+          if (events.length > 0) {
+            const latest = events[events.length - 1];
+            if (latest.status === 'completed') {
+              throw new Error(
+                `Download completed before cancellation could occur (size=${latest.bytesDownloaded})`,
+              );
+            }
+            if (latest.bytesDownloaded > 0) {
+              started = true;
+              break;
+            }
           }
-          await sleep(150);
+          await sleep(100);
+        }
+
+        if (!started) {
+          throw new Error('Download did not produce progress before cancel');
         }
 
         // Call cancel
@@ -711,12 +788,14 @@ async function main() {
         // Start download with server instructed to abort after 512KB
         const dropUrl = `${baseUrl}?throttle_kbps=${THROTTLE_KBPS}&drop_after_bytes=${dropThresholdBytes}`;
         await client.evaluate(`
-          window.__activePromise = window.ResumableDownload.download({
+          window.__activeState = { done: false, error: null };
+          window.ResumableDownload.download({
             downloadId: '${downloadId}',
             url: '${dropUrl}',
             destinationPath: '${destPath}',
             directory: 'DATA'
-          }).catch(err => ({ error: err.message || String(err) }));
+          }).then(() => { window.__activeState.done = true; })
+            .catch(err => { window.__activeState.done = true; window.__activeState.error = err.message || String(err); });
           undefined;
         `);
 
@@ -765,11 +844,13 @@ async function main() {
         // Resume using same URL (server allows completion on Range request)
         await client.evaluate('window.__clearE2EEvents()');
         await client.evaluate(`
-          window.__activePromise = window.ResumableDownload.resume({
+          window.__activeState = { done: false, error: null };
+          window.ResumableDownload.resume({
             downloadId: '${downloadId}',
             url: '${dropUrl}',
             destinationPath: '${destPath}'
-          }).catch(err => ({ error: err.message || String(err) }));
+          }).then(() => { window.__activeState.done = true; })
+            .catch(err => { window.__activeState.done = true; window.__activeState.error = err.message || String(err); });
           undefined;
         `);
 
@@ -818,7 +899,15 @@ async function main() {
     }
   } finally {
     // Teardown
+    try {
+      adb('logcat -d -v time > /tmp/e2e-logcat.txt', serial);
+      logInfo('Captured logcat snapshot to /tmp/e2e-logcat.txt');
+    } catch {}
+
     client.close();
+    try {
+      adb(`reverse --remove tcp:${SERVER_PORT}`, serial);
+    } catch {}
     try {
       adb(`forward --remove tcp:${hostPort}`, serial);
     } catch {}

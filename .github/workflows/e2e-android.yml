@@ -15,7 +15,7 @@ jobs:
   e2e-emulator:
     name: Android E2E Tests (API 34)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository
@@ -60,6 +60,7 @@ jobs:
 
       - name: Run E2E tests on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 8
         with:
           api-level: 34
           target: google_apis
@@ -68,13 +69,12 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: |
-            yarn test:e2e --skip-build
-
-      - name: Upload logcat on failure
-        if: failure()
-        run: |
-          adb logcat -d > /tmp/e2e-logcat.txt || true
-        continue-on-error: true
+            yarn test:e2e --skip-build || {
+              EXIT_CODE=$?
+              echo "E2E runner exited with code $EXIT_CODE; capturing logcat before emulator termination..."
+              timeout 10s adb logcat -d -v time > /tmp/e2e-logcat.txt 2>/dev/null || true
+              exit $EXIT_CODE
+            }
 
       - name: Archive test artifacts on failure
         if: failure()
@@ -84,3 +84,4 @@ jobs:
           path: |
             /tmp/e2e-logcat.txt
             example-app/android/app/build/reports/
+          if-no-files-found: ignore
