@@ -3,8 +3,42 @@ name: E2E Android
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.agents/**'
+      - 'docs/**'
+      - '.gitignore'
+      - '.prettierignore'
+      - '.prettierrc'
+      - '.editorconfig'
+      - '.pr_agent.toml'
+      - 'LICENSE'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - 'scripts/verify-cdn.mjs'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/pr-agent.yml'
+      - '.github/workflows/pr-preview.yml'
+      - '.github/workflows/release-please.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.agents/**'
+      - 'docs/**'
+      - '.gitignore'
+      - '.prettierignore'
+      - '.prettierrc'
+      - '.editorconfig'
+      - '.pr_agent.toml'
+      - 'LICENSE'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
+      - 'scripts/verify-cdn.mjs'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/pr-agent.yml'
+      - '.github/workflows/pr-preview.yml'
+      - '.github/workflows/release-please.yml'
   workflow_dispatch:
 
 concurrency:
