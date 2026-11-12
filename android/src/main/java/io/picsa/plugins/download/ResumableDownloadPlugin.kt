@@ -405,7 +405,7 @@ class ResumableDownloadPlugin : Plugin() {
     override fun checkPermissions(call: PluginCall) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val ret = JSObject()
-            ret.put("display", "granted")
+            ret.put("notifications", "granted")
             call.resolve(ret)
             return
         }
@@ -416,7 +416,7 @@ class ResumableDownloadPlugin : Plugin() {
     override fun requestPermissions(call: PluginCall) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val ret = JSObject()
-            ret.put("display", "granted")
+            ret.put("notifications", "granted")
             call.resolve(ret)
             return
         }

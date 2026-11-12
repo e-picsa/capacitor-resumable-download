@@ -160,8 +160,31 @@ class HttpRangeDownloader(
 
         val initialOffset = partLength
         var resumed = false
-
-        val httpRequestBuilder = Request.Builder().url(request.url)
+        val httpRequestBuilder = try {
+            Request.Builder().url(request.url)
+        } catch (e: IllegalArgumentException) {
+            onDiagnostic(
+                "error",
+                "Malformed URL (${request.url}): ${e.message}",
+                "MALFORMED_URL",
+                mapOf("url" to request.url)
+            )
+            onProgress(
+                ProgressSnapshot(
+                    downloadId = request.downloadId,
+                    bytesDownloaded = partLength,
+                    totalBytes = sidecar?.totalBytes ?: -1L,
+                    progress = calculateProgress(partLength, sidecar?.totalBytes ?: -1L),
+                    status = ProgressSnapshot.Status.ERROR
+                )
+            )
+            return DownloadOutcome.Failure(
+                downloadId = request.downloadId,
+                error = e,
+                bytesDownloaded = partLength,
+                canResume = false
+            )
+        }
 
         // Always request identity encoding unless caller explicitly specifies otherwise,
         // preventing transparent gzip from corrupting byte-range slicing.
@@ -380,6 +403,14 @@ class HttpRangeDownloader(
                 writeMode = "rw"
             }
 
+            var currentBytes = partLength
+
+            if (isCancelled()) {
+                partFile.delete()
+                metaFile.delete()
+                return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
+            }
+
             // Persist updated sidecar
             val newSidecar = MetaSidecar(
                 url = request.url,
@@ -395,7 +426,12 @@ class HttpRangeDownloader(
                 canResume = false
             )
 
-            var currentBytes = partLength
+            if (isCancelled()) {
+                partFile.delete()
+                metaFile.delete()
+                return DownloadOutcome.Cancelled(request.downloadId, currentBytes)
+            }
+
             var lastEmitTimeMs = System.currentTimeMillis()
             var lastEmitPercent = calculateProgress(currentBytes, totalBytes)
             var bytesSinceLastEmit = 0L
@@ -478,8 +514,8 @@ class HttpRangeDownloader(
                             val elapsed = now - lastEmitTimeMs
                             val currentPercent = calculateProgress(currentBytes, totalBytes)
 
-                            // Throttle progress events: max 1 event per 250ms OR >= 1% change
-                            if (elapsed >= 250 || kotlin.math.abs(currentPercent - lastEmitPercent) >= 1) {
+                            // Throttle progress events: strictly time-based (max 1 event per 250ms) during active streaming
+                            if (elapsed >= 250) {
                                 val throughput = if (elapsed > 0) (bytesSinceLastEmit * 1000) / elapsed else 0L
                                 onProgress(
                                     ProgressSnapshot(
