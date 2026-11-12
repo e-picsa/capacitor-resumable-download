@@ -1,7 +1,7 @@
 {
   "name": "@picsa/capacitor-resumable-download",
   "version": "0.0.1",
-  "description": "Capacitor 8 plugin for robust, resumable file downloads with HTTP Range support, WorkManager background execution, and pause/resume capabilities.",
+  "description": "Capacitor plugin for robust, resumable file downloads with HTTP Range support, WorkManager background execution, and pause/resume capabilities.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -59,8 +59,9 @@
   "engines": {
     "node": ">=24.0.0"
   },
+  "// peerDependencies": "Retain both ^8.0.0 and ^9.0.0 for dual compatibility with Capacitor 8 and 9 host apps. Do not overwrite with >=9.0.0.",
   "peerDependencies": {
-    "@capacitor/core": "^8.0.0"
+    "@capacitor/core": "^8.0.0 || ^9.0.0"
   },
   "devDependencies": {
     "@capacitor/android": "^8.0.0",
