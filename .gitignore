@@ -44,3 +44,5 @@ coverage/
 
 # Local deterministic test server artifacts
 .tmp-test-server/
+# repo-templates:repo-audit
+.agents/tmp/audit-ledger.md
