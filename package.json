@@ -59,6 +59,7 @@
   "engines": {
     "node": ">=24.0.0"
   },
+  "// peerDependencies": "Retain both ^8.0.0 and ^9.0.0 for dual compatibility with Capacitor 8 and 9 host apps. Do not overwrite with >=9.0.0.",
   "peerDependencies": {
     "@capacitor/core": "^8.0.0 || ^9.0.0"
   },

@@ -1,3 +1,21 @@
+// =============================================================================
+// DUAL-COMPATIBILITY NOTICE (Capacitor 8 & Capacitor 9):
+// =============================================================================
+// DO NOT hardcode modern versions (such as androidxCoreVersion '1.19.0' or minSdkVersion 26) here!
+// Every variable MUST be wrapped with safeExtGet(prop, fallback).
+//
+// Why:
+// 1. Capacitor 8 host apps use AGP 8.x and require androidxCoreVersion <= 1.17.x and minSdkVersion 24.
+//    Hardcoding 1.19.0 breaks Cap 8 builds with:
+//    "Dependency 'androidx.core:core:1.19.0' requires Android Gradle plugin 9.1.0 or higher."
+// 2. Capacitor 9 host apps supply their own versions via rootProject.ext
+//    (minSdkVersion 26, compileSdk 37, androidxCoreVersion 1.19.0), which takes precedence.
+//
+// Automated migration scripts (e.g. @capacitor/plugin-migration-v8-to-v9) may attempt to overwrite
+// this file with hardcoded Cap 9 versions. Do NOT allow removing safeExtGet or bumping fallbacks
+// beyond Capacitor 8 limits in pull requests.
+// =============================================================================
+
 def safeExtGet(prop, fallback) {
     rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
 }
