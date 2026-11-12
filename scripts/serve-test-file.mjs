@@ -76,7 +76,10 @@ const server = http.createServer((req, res) => {
   );
 
   if (url.pathname === '/health') {
-    sendHeaders(res, 200, { 'Content-Type': 'application/json' });
+    sendHeaders(res, 200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end(JSON.stringify({ ok: true, size: FILE_SIZE, etag: ETAG }));
     return;
   }
@@ -92,6 +95,8 @@ const server = http.createServer((req, res) => {
     ETag: ETAG,
     'Content-Type': 'application/octet-stream',
     'Cache-Control': 'no-store',
+    // Dev-only: allow the demo WebView (https://localhost) to probe /health.
+    'Access-Control-Allow-Origin': '*',
   };
 
   if (req.method === 'HEAD') {

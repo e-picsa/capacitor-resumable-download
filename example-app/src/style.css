@@ -343,4 +343,23 @@ input[type="text"]:focus {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.dot {
+  font-size: 0.65rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.dot.checking {
+  color: var(--text-muted);
+}
+
+.dot.reachable {
+  color: var(--success);
+}
+
+.dot.unreachable {
+  color: var(--danger);
 }
