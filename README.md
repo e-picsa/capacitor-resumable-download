@@ -21,6 +21,21 @@ Built specifically for offline-first rural deployments (such as PICSA agricultur
 
 ---
 
+## Compatibility
+
+| Plugin Version | Capacitor Version | Status         |
+| :------------- | :---------------- | :------------- |
+| `0.x.x`        | `8.x.x`           | Active support |
+| `0.x.x`        | `9.x.x`           | Active support |
+
+### Release & Versioning Strategy
+
+- **Single-Branch Dual Support (`main`)**: The plugin targets `@capacitor/core: ^8.0.0 || ^9.0.0`. It avoids deprecated bridge APIs and dynamically honors the host application's SDK settings. A Capacitor 8 host app builds at API 24+, while a Capacitor 9 host app builds at API 26+.
+- **Android 7.0–8.x Long-Term Support**: e-PICSA serves rural smallholder farmers using budget/legacy hardware. We maintain API 24 as the build floor for the Capacitor 8 line and avoid dropping legacy device support prematurely.
+- See [ROADMAP.md](ROADMAP.md) for full architectural details and upgrade paths.
+
+---
+
 ## Installation
 
 ```bash
