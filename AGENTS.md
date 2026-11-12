@@ -79,6 +79,8 @@ yarn demo:install  # adb install -r <apk> (add `-s <serial>` for a specific devi
 
 See [docs/demo-testing.md](docs/demo-testing.md) for agent-driven emulator workflow
 (snapshot/press/fill via `agent-device`, logcat tags, and pause/resume presets).
+See [docs/known-issues-and-caveats.md](docs/known-issues-and-caveats.md) for Android version quirks (TLS on API 24, FGS limits, OEM battery killers).
+See [ROADMAP.md](ROADMAP.md) for Capacitor 8/9 branching strategy, E2E CI plan, and code audit tracking.
 
 ### Code Formatting & Linting
 
