@@ -1,6 +1,6 @@
 {
   "name": "@picsa/capacitor-resumable-download",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Capacitor plugin for robust, resumable file downloads with HTTP Range support, WorkManager background execution, and pause/resume capabilities.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
